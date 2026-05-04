@@ -1,21 +1,25 @@
 @import "tailwindcss";
 
 :root {
-  --bg-deep: #080810;
-  --bg-panel: rgba(0, 14, 30, 0.88);
-  --bg-panel-hover: rgba(0, 20, 45, 0.92);
-  --accent-primary: #00d4ff;
-  --accent-secondary: #0066cc;
-  --accent-amber: #ff9500;
-  --accent-green: #00ff88;
-  --accent-red: #ff3b3b;
-  --text-primary: #d0eeff;
-  --text-secondary: #5a9ab8;
-  --text-dim: #2a5a72;
-  --border-glow: rgba(0, 212, 255, 0.25);
-  --border-dim: rgba(0, 100, 150, 0.2);
-  --panel-shadow: 0 0 40px rgba(0, 80, 160, 0.12), inset 0 0 20px rgba(0, 200, 255, 0.03);
-  --scan-speed: 4s;
+  --bg-deep: #000000;
+  --bg-panel: rgba(0, 8, 16, 0.92);
+  --bg-panel-hover: rgba(0, 14, 28, 0.96);
+  --accent-primary: #00e5ff;
+  --accent-bright: #00ffff;
+  --accent-secondary: #0088cc;
+  --accent-amber: #ff8c00;
+  --accent-amber-dim: rgba(255, 140, 0, 0.4);
+  --accent-green: #00ff9d;
+  --accent-red: #ff2244;
+  --text-primary: #b0ecff;
+  --text-secondary: #4a9ab8;
+  --text-dim: #1a4a5e;
+  --border-glow: rgba(0, 229, 255, 0.35);
+  --border-dim: rgba(0, 150, 200, 0.15);
+  --panel-shadow: 0 0 40px rgba(0, 180, 255, 0.08);
+  --glow-strong: 0 0 20px rgba(0, 229, 255, 0.6), 0 0 40px rgba(0, 229, 255, 0.2);
+  --glow-soft: 0 0 10px rgba(0, 229, 255, 0.3);
+  --orange-glow: 0 0 12px rgba(255, 140, 0, 0.5);
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -29,87 +33,92 @@ html, body {
   width: 100vw;
 }
 
-/* Scanline animation */
+/* ── Animations ─────────────────────────────────── */
+
 @keyframes scanline {
-  0% { transform: translateY(-100%); }
-  100% { transform: translateY(100vh); }
+  0% { top: -2px; }
+  100% { top: 100%; }
 }
 
-/* Glow pulse */
 @keyframes pulse-glow {
-  0%, 100% { border-color: rgba(0, 212, 255, 0.2); box-shadow: 0 0 8px rgba(0, 212, 255, 0.1); }
-  50% { border-color: rgba(0, 212, 255, 0.5); box-shadow: 0 0 20px rgba(0, 212, 255, 0.2); }
+  0%, 100% { opacity: 0.6; }
+  50% { opacity: 1; }
 }
 
-/* Hex rotate */
-@keyframes hex-rotate {
+@keyframes spin-slow {
   from { transform: rotate(0deg); }
   to { transform: rotate(360deg); }
 }
 
-/* Text flicker */
+@keyframes spin-reverse {
+  from { transform: rotate(360deg); }
+  to { transform: rotate(0deg); }
+}
+
 @keyframes flicker {
-  0%, 100% { opacity: 1; }
-  92% { opacity: 1; }
-  93% { opacity: 0.7; }
-  94% { opacity: 1; }
-  96% { opacity: 0.85; }
-  97% { opacity: 1; }
+  0%, 89%, 91%, 93%, 100% { opacity: 1; }
+  90% { opacity: 0.6; }
+  92% { opacity: 0.8; }
 }
 
-/* Data stream upward */
-@keyframes data-stream {
-  0% { transform: translateY(0); opacity: 0.8; }
-  100% { transform: translateY(-100px); opacity: 0; }
+@keyframes data-scroll {
+  0% { transform: translateY(0); }
+  100% { transform: translateY(-50%); }
 }
 
-/* Slide in from right */
 @keyframes slide-in-right {
-  from { transform: translateX(20px); opacity: 0; }
+  from { transform: translateX(12px); opacity: 0; }
   to { transform: translateX(0); opacity: 1; }
 }
 
-/* Thinking pulse */
 @keyframes thinking-pulse {
-  0%, 100% { opacity: 0.4; }
+  0%, 100% { opacity: 0.35; }
   50% { opacity: 1; }
 }
 
-/* Boot scan */
-@keyframes boot-scan {
-  from { width: 0; }
-  to { width: 100%; }
-}
-
-/* Node appear */
-@keyframes node-appear {
-  from { transform: scale(0); opacity: 0; }
-  to { transform: scale(1); opacity: 1; }
-}
-
-/* Typing cursor */
 @keyframes blink {
   0%, 100% { opacity: 1; }
   50% { opacity: 0; }
 }
 
-.cursor-blink {
-  animation: blink 1s step-end infinite;
+@keyframes arc-dash {
+  to { stroke-dashoffset: -283; }
 }
 
-.text-flicker {
-  animation: flicker 8s ease-in-out infinite;
+@keyframes node-appear {
+  from { transform: scale(0) rotate(-180deg); opacity: 0; }
+  to { transform: scale(1) rotate(0deg); opacity: 1; }
 }
 
-.pulse-glow {
-  animation: pulse-glow 3s ease-in-out infinite;
+@keyframes orbit {
+  from { transform: rotate(0deg) translateX(var(--orbit-r, 60px)) rotate(0deg); }
+  to { transform: rotate(360deg) translateX(var(--orbit-r, 60px)) rotate(-360deg); }
 }
 
-/* Scrollbar styling */
-::-webkit-scrollbar { width: 4px; }
+@keyframes hex-wave {
+  0% { opacity: 0.03; }
+  50% { opacity: 0.09; }
+  100% { opacity: 0.03; }
+}
+
+@keyframes boot-in {
+  from { width: 0; opacity: 0; }
+  to { width: 100%; opacity: 1; }
+}
+
+/* ── Utility classes ────────────────────────────── */
+
+.text-flicker { animation: flicker 10s ease-in-out infinite; }
+.pulse-glow { animation: pulse-glow 2.5s ease-in-out infinite; }
+.spin-slow { animation: spin-slow 12s linear infinite; }
+.spin-reverse { animation: spin-reverse 8s linear infinite; }
+.cursor-blink { animation: blink 1s step-end infinite; }
+.node-appear { animation: node-appear 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) forwards; }
+
+/* ── Scrollbar ──────────────────────────────────── */
+::-webkit-scrollbar { width: 3px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: var(--accent-secondary); border-radius: 2px; }
+::-webkit-scrollbar-thumb { background: rgba(0, 229, 255, 0.3); border-radius: 2px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--accent-primary); }
 
-/* Custom selection */
-::selection { background: rgba(0, 212, 255, 0.2); color: var(--accent-primary); }
+::selection { background: rgba(0, 229, 255, 0.15); color: var(--accent-bright); }

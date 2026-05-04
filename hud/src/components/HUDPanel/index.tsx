@@ -6,123 +6,119 @@ interface HUDPanelProps {
   children: React.ReactNode;
   active?: boolean;
   className?: string;
+  style?: React.CSSProperties;
   statusDot?: 'green' | 'amber' | 'red' | 'none';
   headerRight?: React.ReactNode;
+  accentColor?: string;
 }
 
-export function HUDPanel({ title, children, active = false, className = '', statusDot = 'none', headerRight }: HUDPanelProps) {
-  const dotColor = {
-    green: 'var(--accent-green)',
-    amber: 'var(--accent-amber)',
-    red: 'var(--accent-red)',
-    none: 'transparent',
-  }[statusDot];
+export function HUDPanel({
+  title, children, active = false, className = '', style,
+  statusDot = 'none', headerRight, accentColor = '#00e5ff',
+}: HUDPanelProps) {
+  const dotColor = { green: '#00ff9d', amber: '#ff8c00', red: '#ff2244', none: 'transparent' }[statusDot];
+  const borderColor = active ? `${accentColor}55` : 'rgba(0,180,220,0.12)';
 
   return (
     <div
       style={{
         position: 'relative',
-        background: 'var(--bg-panel)',
-        border: `1px solid ${active ? 'rgba(0,212,255,0.4)' : 'rgba(0,100,150,0.2)'}`,
-        boxShadow: active ? '0 0 30px rgba(0,212,255,0.1), inset 0 0 20px rgba(0,200,255,0.02)' : 'var(--panel-shadow)',
-        animation: active ? 'pulse-glow 3s ease-in-out infinite' : 'none',
-        backdropFilter: 'blur(12px)',
+        background: 'rgba(0,4,12,0.92)',
+        border: `1px solid ${borderColor}`,
+        boxShadow: active
+          ? `0 0 20px ${accentColor}18, inset 0 0 30px ${accentColor}06`
+          : '0 0 20px rgba(0,0,0,0.5)',
+        backdropFilter: 'blur(8px)',
         overflow: 'hidden',
-        transition: 'border-color 0.3s ease',
+        transition: 'border-color 0.4s ease, box-shadow 0.4s ease',
+        ...style,
       }}
       className={className}
     >
       {/* Corner brackets */}
-      <CornerBracket pos="tl" />
-      <CornerBracket pos="tr" />
-      <CornerBracket pos="bl" />
-      <CornerBracket pos="br" />
+      {(['tl', 'tr', 'bl', 'br'] as const).map((pos) => (
+        <CornerBracket key={pos} pos={pos} color={accentColor} />
+      ))}
 
       {/* Scan line */}
-      <div
-        style={{
-          position: 'absolute',
-          top: 0,
-          left: 0,
-          right: 0,
-          height: '1px',
-          background: 'linear-gradient(90deg, transparent, rgba(0,212,255,0.3), transparent)',
-          animation: 'scanline var(--scan-speed) linear infinite',
-          pointerEvents: 'none',
-          zIndex: 10,
-        }}
-      />
+      <div style={{
+        position: 'absolute', left: 0, right: 0, height: '1px',
+        background: `linear-gradient(90deg, transparent, ${accentColor}50, transparent)`,
+        animation: 'scanline 5s linear infinite',
+        pointerEvents: 'none', zIndex: 10,
+      }} />
 
       {/* Header */}
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          padding: '8px 16px',
-          borderBottom: '1px solid rgba(0,100,150,0.2)',
-          background: 'rgba(0,20,50,0.5)',
-        }}
-      >
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+      <div style={{
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        padding: '6px 14px',
+        borderBottom: `1px solid ${accentColor}18`,
+        background: 'rgba(0,10,25,0.6)',
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
           {statusDot !== 'none' && (
-            <div
-              style={{
-                width: 6,
-                height: 6,
-                borderRadius: '50%',
-                background: dotColor,
-                boxShadow: `0 0 6px ${dotColor}`,
-                animation: statusDot === 'green' ? 'thinking-pulse 2s ease-in-out infinite' : 'none',
-              }}
-            />
+            <div style={{
+              width: 5, height: 5, borderRadius: '50%',
+              background: dotColor,
+              boxShadow: `0 0 6px ${dotColor}`,
+              animation: 'pulse-glow 2s infinite',
+            }} />
           )}
-          <span
-            style={{
-              fontSize: 10,
-              letterSpacing: '0.2em',
-              color: 'var(--accent-primary)',
-              textTransform: 'uppercase',
-              fontWeight: 600,
-            }}
-          >
+          {/* Left decorative line */}
+          <div style={{ width: 12, height: 1, background: accentColor, opacity: 0.6 }} />
+          <span style={{
+            fontSize: 9, letterSpacing: '0.25em', color: accentColor,
+            textTransform: 'uppercase', fontWeight: 700,
+            textShadow: `0 0 8px ${accentColor}80`,
+          }}>
             {title}
           </span>
+          <div style={{ width: 8, height: 1, background: accentColor, opacity: 0.3 }} />
         </div>
-        {headerRight && <div>{headerRight}</div>}
+        {headerRight && (
+          <div style={{ fontSize: 8, color: 'rgba(0,229,255,0.4)', letterSpacing: '0.1em' }}>
+            {headerRight}
+          </div>
+        )}
       </div>
 
-      {/* Content */}
-      <div style={{ position: 'relative', height: 'calc(100% - 37px)', overflow: 'hidden' }}>
-        {children}
+      {/* Content area */}
+      <div style={{ position: 'relative', height: 'calc(100% - 32px)', overflow: 'hidden' }}>
+        {/* Subtle grid overlay */}
+        <div style={{
+          position: 'absolute', inset: 0, pointerEvents: 'none',
+          backgroundImage: `
+            linear-gradient(rgba(0,229,255,0.025) 1px, transparent 1px),
+            linear-gradient(90deg, rgba(0,229,255,0.025) 1px, transparent 1px)
+          `,
+          backgroundSize: '24px 24px',
+          zIndex: 0,
+        }} />
+        <div style={{ position: 'relative', zIndex: 1, height: '100%' }}>
+          {children}
+        </div>
       </div>
     </div>
   );
 }
 
-function CornerBracket({ pos }: { pos: 'tl' | 'tr' | 'bl' | 'br' }) {
-  const size = 10;
-  const t = pos.includes('t') ? 0 : undefined;
-  const b = pos.includes('b') ? 0 : undefined;
-  const l = pos.includes('l') ? 0 : undefined;
-  const r = pos.includes('r') ? 0 : undefined;
+const BRACKET_SIZE = 12;
 
+function CornerBracket({ pos, color }: { pos: 'tl' | 'tr' | 'bl' | 'br'; color: string }) {
   return (
-    <div
-      style={{
-        position: 'absolute',
-        top: t,
-        bottom: b,
-        left: l,
-        right: r,
-        width: size,
-        height: size,
-        borderTop: pos.includes('t') ? `2px solid var(--accent-primary)` : undefined,
-        borderBottom: pos.includes('b') ? `2px solid var(--accent-primary)` : undefined,
-        borderLeft: pos.includes('l') ? `2px solid var(--accent-primary)` : undefined,
-        borderRight: pos.includes('r') ? `2px solid var(--accent-primary)` : undefined,
-        zIndex: 20,
-      }}
-    />
+    <div style={{
+      position: 'absolute',
+      top: pos.includes('t') ? 0 : undefined,
+      bottom: pos.includes('b') ? 0 : undefined,
+      left: pos.includes('l') ? 0 : undefined,
+      right: pos.includes('r') ? 0 : undefined,
+      width: BRACKET_SIZE,
+      height: BRACKET_SIZE,
+      borderTop: pos.includes('t') ? `2px solid ${color}` : undefined,
+      borderBottom: pos.includes('b') ? `2px solid ${color}` : undefined,
+      borderLeft: pos.includes('l') ? `2px solid ${color}` : undefined,
+      borderRight: pos.includes('r') ? `2px solid ${color}` : undefined,
+      zIndex: 20,
+    }} />
   );
 }
