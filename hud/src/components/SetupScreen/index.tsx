@@ -26,7 +26,7 @@ export function SetupScreen({ onComplete }: SetupScreenProps) {
       '> Voice engine... STANDBY',
       '> Computer use module... STANDBY',
       '> Browser control... STANDBY',
-      '',
+      '__BLANK__',
       '> ANTHROPIC API KEY REQUIRED',
       '> Obtain key at: console.anthropic.com',
     ];
@@ -138,20 +138,26 @@ export function SetupScreen({ onComplete }: SetupScreenProps) {
           }} />
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-            {typedLines.map((line, i) => (
-              <div key={i} style={{
-                fontSize: 11, letterSpacing: '0.05em',
-                color: line.startsWith('> ANTHROPIC') ? '#ff9500'
-                  : line.startsWith('> JARVIS') ? '#00e5ff'
-                  : line === '' ? undefined
-                  : line.includes('OK') || line.includes('ONLINE') ? '#00ff9d'
-                  : 'rgba(0,229,255,0.5)',
-                animation: 'slide-in-right 0.15s ease',
-                fontWeight: line.startsWith('> ANTHROPIC') ? 700 : 400,
-              }}>
-                {line}
-              </div>
-            ))}
+            {typedLines.map((line, i) => {
+              const safe = line ?? '';
+              const isBlank = safe === '__BLANK__';
+              const lineColor = safe.startsWith('> ANTHROPIC') ? '#ff9500'
+                : safe.startsWith('> JARVIS') ? '#00e5ff'
+                : isBlank ? undefined
+                : safe.includes('OK') || safe.includes('ONLINE') ? '#00ff9d'
+                : 'rgba(0,229,255,0.5)';
+              return (
+                <div key={i} style={{
+                  fontSize: 11, letterSpacing: '0.05em',
+                  color: lineColor,
+                  animation: 'slide-in-right 0.15s ease',
+                  fontWeight: safe.startsWith('> ANTHROPIC') ? 700 : 400,
+                  minHeight: isBlank ? 6 : undefined,
+                }}>
+                  {isBlank ? null : safe}
+                </div>
+              );
+            })}
             {typedLines.length < 9 && (
               <span style={{ color: '#00e5ff', animation: 'blink 1s step-end infinite' }}>█</span>
             )}
