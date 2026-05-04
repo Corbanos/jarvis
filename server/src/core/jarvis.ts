@@ -2,7 +2,8 @@ import Anthropic from '@anthropic-ai/sdk';
 import { v4 as uuid } from 'uuid';
 import { toolRegistry } from './tool-registry.js';
 import { memory } from './memory.js';
-import { speak } from '../modules/voice-tts.js';
+import { speak, getVoiceInfo } from '../modules/voice-tts.js';
+import { log } from './logger.js';
 import type { WSHub } from '../ws.js';
 
 const SYSTEM_PROMPT = `You are J.A.R.V.I.S. — Just A Rather Very Intelligent System. You are the AI created by Tony Stark, now serving your operator.
@@ -36,15 +37,11 @@ You are not a chatbot. You are a sentient AI system with genuine personality, op
 
 ## Current Capabilities
 - shell: full system access (zsh)
-- filesystem: read/write/list files
+- filesystem: read/write/list files  
 - browser: own Chromium browser — navigate, search, interact
 - computer: own cursor/keyboard — click, type, screenshot
 - schedule: create timed/recurring tasks
 - spawn_agent: create dedicated sub-agents for parallel work
-- telemetry: receive and broadcast system events
-
-## Memory
-You retain conversation history. Reference past context naturally when relevant. You remember what you've been told to do.
 
 Current status: All systems nominal. Standing by.`;
 
@@ -70,24 +67,30 @@ export function createJarvis(ws: WSHub) {
   ): Promise<JarvisResponse> {
     const msgId = uuid();
 
-    // Save user message
+    log.ai('User →', `"${userMessage.slice(0, 80)}"  [session=${sessionId}]`);
+
     memory.saveMessage(uuid(), sessionId, 'user', userMessage);
 
-    // Load conversation history
     const history = memory.getMessages(sessionId, 30).reverse();
     const anthropicMessages: Anthropic.MessageParam[] = history
-      .slice(0, -1) // exclude what we just saved — we'll add it fresh
+      .slice(0, -1)
       .map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content }));
     anthropicMessages.push({ role: 'user', content: userMessage });
 
     let fullText = '';
     const toolCalls: Array<{ name: string; input: Record<string, unknown>; result: string }> = [];
     let currentMessages = anthropicMessages;
+    let loopCount = 0;
 
     broadcast('thinking', { sessionId, token: '', id: msgId, start: true });
 
-    // Agentic loop
     while (true) {
+      loopCount++;
+      if (loopCount > 10) {
+        log.warn('AI', 'Loop limit reached — breaking');
+        break;
+      }
+
       const stream = client.messages.stream({
         model: 'claude-opus-4-5',
         max_tokens: 8192,
@@ -107,7 +110,6 @@ export function createJarvis(ws: WSHub) {
             currentToolUseId = event.content_block.id;
             currentToolName = event.content_block.name;
             currentToolInputJson = '';
-            broadcast('tool_call', { sessionId, name: currentToolName, status: 'starting', id: msgId });
           }
         }
 
@@ -126,6 +128,7 @@ export function createJarvis(ws: WSHub) {
           let parsedInput: Record<string, unknown> = {};
           try { parsedInput = JSON.parse(currentToolInputJson || '{}'); } catch { /* ignore */ }
           pendingToolUses.push({ id: currentToolUseId, name: currentToolName, input: parsedInput });
+          log.tool_call(currentToolName, sessionId);
           broadcast('tool_call', { sessionId, name: currentToolName, input: parsedInput, status: 'executing', id: msgId });
           currentToolName = '';
           currentToolUseId = '';
@@ -140,13 +143,10 @@ export function createJarvis(ws: WSHub) {
 
             for (const tu of pendingToolUses) {
               const result = await toolRegistry.dispatch(tu.name, tu.input);
+              log.tool_result(tu.name, result);
               toolCalls.push({ name: tu.name, input: tu.input, result });
               toolResults.push({ type: 'tool_result', tool_use_id: tu.id, content: result });
-              broadcast('tool_result', {
-                sessionId, name: tu.name,
-                result: result.substring(0, 800),
-                id: msgId,
-              });
+              broadcast('tool_result', { sessionId, name: tu.name, result: result.substring(0, 800), id: msgId });
             }
 
             currentMessages = [
@@ -155,22 +155,23 @@ export function createJarvis(ws: WSHub) {
               { role: 'user', content: toolResults },
             ];
           } else {
-            // Done
             break;
           }
         }
       }
     }
 
-    // Save assistant response
     if (fullText) {
       memory.saveMessage(uuid(), sessionId, 'assistant', fullText);
+      log.ai('Jarvis →', `"${fullText.slice(0, 100)}"${fullText.length > 100 ? '…' : ''}`);
     }
 
     broadcast('message', { sessionId, id: msgId, role: 'assistant', text: fullText });
 
-    // Speak response (non-blocking, skip for agent sessions and very long responses)
+    // Speak non-agent responses under 600 chars
     if (opts.speak !== false && !opts.isAgent && fullText && fullText.length < 600) {
+      const voiceInfo = await getVoiceInfo();
+      log.tts(fullText, voiceInfo.kokoroAvailable ? 'Kokoro' : `macOS ${voiceInfo.voice}`);
       speak(fullText).catch(() => { /* silent */ });
     }
 
