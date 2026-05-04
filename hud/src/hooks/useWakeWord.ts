@@ -174,16 +174,18 @@ export function useWakeWord({ onTranscript, onStateChange, enabled = true }: Use
       };
 
       recognition.onerror = (e) => {
-        if (e.error === 'no-speech' || e.error === 'aborted') return;
-        console.error('[WakeWord] Recognition error:', e.error);
+        // Silently ignore transient/expected errors — onend will auto-restart
+        const ignored = ['no-speech', 'aborted', 'network', 'audio-capture'];
+        if (ignored.includes(e.error)) return;
+        console.warn('[WakeWord] Recognition error (will retry):', e.error);
       };
 
       recognition.onend = () => {
-        // Auto-restart to keep listening
+        // Auto-restart to keep always-on listening going
         if (!stopped) {
           setTimeout(() => {
-            try { recognition.start(); } catch { /* ignore if already started */ }
-          }, 300);
+            try { recognition.start(); } catch { /* already started */ }
+          }, 500);
         }
       };
 
