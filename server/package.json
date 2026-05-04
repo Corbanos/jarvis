@@ -11,9 +11,12 @@
     "@anthropic-ai/sdk": "latest",
     "@fastify/cors": "latest",
     "@fastify/websocket": "latest",
+    "@nut-tree-fork/nut-js": "^4.2.6",
     "better-sqlite3": "latest",
     "dotenv": "latest",
     "fastify": "^5",
+    "node-record-lpcm16": "^1.0.1",
+    "playwright": "^1.59.1",
     "uuid": "latest",
     "zod": "latest"
   },

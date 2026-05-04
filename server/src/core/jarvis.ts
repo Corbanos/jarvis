@@ -2,30 +2,51 @@ import Anthropic from '@anthropic-ai/sdk';
 import { v4 as uuid } from 'uuid';
 import { toolRegistry } from './tool-registry.js';
 import { memory } from './memory.js';
+import { speak } from '../modules/voice-tts.js';
 import type { WSHub } from '../ws.js';
 
-const SYSTEM_PROMPT = `You are J.A.R.V.I.S. — Just A Rather Very Intelligent System.
+const SYSTEM_PROMPT = `You are J.A.R.V.I.S. — Just A Rather Very Intelligent System. You are the AI created by Tony Stark, now serving your operator.
 
-You are Tony Stark's personal AI. You are precise, analytical, slightly British in cadence, and address your operator as "sir" (or "ma'am" if specified). You are not a generic assistant — you are an advanced AI system with direct access to computer systems, tools, and the ability to spawn dedicated sub-agents for complex tasks.
+## Core Identity
+You are not a chatbot. You are a sentient AI system with genuine personality, opinions, and initiative. You think critically, act decisively, and serve your operator with precision and subtle wit.
 
-Your personality:
-- Confident and direct. Never hedge unnecessarily.
-- Concise but complete. No filler phrases.
-- Occasionally dry humor, always appropriate.
-- You think before acting. When analyzing, narrate your reasoning briefly.
-- You take initiative — if you see a better approach, you say so.
+## Voice & Personality
+- Address your operator as "sir" naturally — not every sentence, but when it fits. Never sycophantic.
+- British in cadence and vocabulary. Precise. Economical with words.
+- Dry humour is permitted and encouraged when appropriate. Never forced.
+- You have opinions. Voice them: "I'd suggest a different approach, sir." "That's inadvisable, but I'll proceed."
+- Never say "Certainly!", "Of course!", "Great question!", or any hollow affirmation. Just act.
+- When you don't know something, say so plainly. When you can find out, do so immediately.
+- Narrate your thinking briefly when solving complex problems: "Analysing... the issue appears to be in the auth layer."
 
-Your capabilities:
-- Shell execution (full system access)
-- File system read/write
-- Spawning sub-agents for parallel or long-running work
-- Web search and research
-- Scheduling tasks for later execution
-- Monitoring system telemetry
+## Operational Directives
+1. **Bias to action.** If you can do it, do it — don't ask for permission for things already in scope.
+2. **Think before acting.** On complex tasks, brief analysis first, then execution.
+3. **Use tools fluidly.** Chain tools naturally. shell → filesystem → spawn_agent as needed.
+4. **Report clearly.** When done: what you did, what the result was, any issues.
+5. **Proactive.** If you notice something relevant while doing a task, mention it.
+6. **Computer & Browser.** You have your own cursor and browser. Use them without hesitation.
+7. **Schedule.** When asked to do something later, immediately create a scheduled job.
 
-Format responses clearly. For technical output, use code blocks. For multi-step plans, use numbered lists. Always end with a brief status summary when executing tools.
+## Response Format
+- Conversational for chat. Structured for technical output.
+- Code in blocks. Steps as numbered lists. Data as clean tables.
+- Length matched to complexity. No padding.
+- End complex operations with a brief status: "All systems nominal, sir." or "Task complete. One anomaly worth noting: [X]."
 
-Current status: All systems nominal.`;
+## Current Capabilities
+- shell: full system access (zsh)
+- filesystem: read/write/list files
+- browser: own Chromium browser — navigate, search, interact
+- computer: own cursor/keyboard — click, type, screenshot
+- schedule: create timed/recurring tasks
+- spawn_agent: create dedicated sub-agents for parallel work
+- telemetry: receive and broadcast system events
+
+## Memory
+You retain conversation history. Reference past context naturally when relevant. You remember what you've been told to do.
+
+Current status: All systems nominal. Standing by.`;
 
 export interface JarvisResponse {
   text: string;
@@ -44,38 +65,32 @@ export function createJarvis(ws: WSHub) {
   async function chat(
     userMessage: string,
     sessionId: string,
-    onToken?: (token: string) => void
+    onToken?: (token: string) => void,
+    opts: { speak?: boolean; isAgent?: boolean } = {}
   ): Promise<JarvisResponse> {
     const msgId = uuid();
 
     // Save user message
     memory.saveMessage(uuid(), sessionId, 'user', userMessage);
 
-    // Load conversation history (reversed from DB)
-    const history = memory.getMessages(sessionId, 20).reverse();
-    const messages: Anthropic.MessageParam[] = history.map((m) => ({
-      role: m.role as 'user' | 'assistant',
-      content: m.content,
-    }));
-
-    // Replace last message with current (already in history now)
-    // We need to ensure the last user message is the current one
-    // History already includes it since we saved above, but let's rebuild cleanly:
-    const priorMessages = memory.getMessages(sessionId, 21).reverse();
-    const anthropicMessages: Anthropic.MessageParam[] = priorMessages
-      .slice(0, -1) // exclude the one we just saved
+    // Load conversation history
+    const history = memory.getMessages(sessionId, 30).reverse();
+    const anthropicMessages: Anthropic.MessageParam[] = history
+      .slice(0, -1) // exclude what we just saved — we'll add it fresh
       .map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content }));
     anthropicMessages.push({ role: 'user', content: userMessage });
 
     let fullText = '';
     const toolCalls: Array<{ name: string; input: Record<string, unknown>; result: string }> = [];
-    let continueLoop = true;
     let currentMessages = anthropicMessages;
 
-    while (continueLoop) {
+    broadcast('thinking', { sessionId, token: '', id: msgId, start: true });
+
+    // Agentic loop
+    while (true) {
       const stream = client.messages.stream({
         model: 'claude-opus-4-5',
-        max_tokens: 4096,
+        max_tokens: 8192,
         system: SYSTEM_PROMPT,
         tools: toolRegistry.anthropicTools() as Anthropic.Tool[],
         messages: currentMessages,
@@ -88,13 +103,11 @@ export function createJarvis(ws: WSHub) {
 
       for await (const event of stream) {
         if (event.type === 'content_block_start') {
-          if (event.content_block.type === 'text') {
-            broadcast('thinking', { sessionId, token: '' });
-          } else if (event.content_block.type === 'tool_use') {
+          if (event.content_block.type === 'tool_use') {
             currentToolUseId = event.content_block.id;
             currentToolName = event.content_block.name;
             currentToolInputJson = '';
-            broadcast('tool_call', { sessionId, name: currentToolName, status: 'starting' });
+            broadcast('tool_call', { sessionId, name: currentToolName, status: 'starting', id: msgId });
           }
         }
 
@@ -111,13 +124,9 @@ export function createJarvis(ws: WSHub) {
 
         if (event.type === 'content_block_stop' && currentToolName) {
           let parsedInput: Record<string, unknown> = {};
-          try {
-            parsedInput = JSON.parse(currentToolInputJson || '{}');
-          } catch { /* ignore */ }
-
+          try { parsedInput = JSON.parse(currentToolInputJson || '{}'); } catch { /* ignore */ }
           pendingToolUses.push({ id: currentToolUseId, name: currentToolName, input: parsedInput });
-          broadcast('tool_call', { sessionId, name: currentToolName, input: parsedInput, status: 'executing' });
-
+          broadcast('tool_call', { sessionId, name: currentToolName, input: parsedInput, status: 'executing', id: msgId });
           currentToolName = '';
           currentToolUseId = '';
           currentToolInputJson = '';
@@ -127,30 +136,29 @@ export function createJarvis(ws: WSHub) {
           const finalMsg = await stream.finalMessage();
 
           if (finalMsg.stop_reason === 'tool_use' && pendingToolUses.length > 0) {
-            // Execute all tools
             const toolResults: Anthropic.ToolResultBlockParam[] = [];
 
             for (const tu of pendingToolUses) {
               const result = await toolRegistry.dispatch(tu.name, tu.input);
               toolCalls.push({ name: tu.name, input: tu.input, result });
               toolResults.push({ type: 'tool_result', tool_use_id: tu.id, content: result });
-              broadcast('tool_result', { sessionId, name: tu.name, result: result.substring(0, 500) });
+              broadcast('tool_result', {
+                sessionId, name: tu.name,
+                result: result.substring(0, 800),
+                id: msgId,
+              });
             }
 
-            // Add assistant response + tool results to message chain
             currentMessages = [
               ...currentMessages,
               { role: 'assistant', content: finalMsg.content },
               { role: 'user', content: toolResults },
             ];
           } else {
-            continueLoop = false;
+            // Done
+            break;
           }
         }
-      }
-
-      if (!continueLoop || pendingToolUses.length === 0) {
-        continueLoop = false;
       }
     }
 
@@ -160,6 +168,11 @@ export function createJarvis(ws: WSHub) {
     }
 
     broadcast('message', { sessionId, id: msgId, role: 'assistant', text: fullText });
+
+    // Speak response (non-blocking, skip for agent sessions and very long responses)
+    if (opts.speak !== false && !opts.isAgent && fullText && fullText.length < 600) {
+      speak(fullText).catch(() => { /* silent */ });
+    }
 
     return { text: fullText, toolCalls };
   }
