@@ -16,6 +16,7 @@ import { agentRoutes } from './routes/agents.js';
 import { telemetryRoutes } from './routes/telemetry.js';
 import { voiceRoutes } from './routes/voice.js';
 import { jobRoutes } from './routes/jobs.js';
+import { setupRoutes, loadConfig, applyApiKey } from './routes/setup.js';
 import { initScheduler } from './modules/scheduler.js';
 import { checkAvailable as checkComputerUse } from './modules/computer-use.js';
 import { checkWhisperAvailable } from './modules/voice-vtt.js';
@@ -34,15 +35,21 @@ declare module 'fastify' {
 const PORT = parseInt(process.env['JARVIS_PORT'] ?? '7777', 10);
 
 async function main() {
-  const app = Fastify({ logger: false });
+  // Load persisted API key from config file if not already in env
+  if (!process.env['ANTHROPIC_API_KEY']) {
+    const saved = loadConfig().anthropicApiKey;
+    if (saved) {
+      applyApiKey(saved);
+      log.info('Loaded API key from ~/.jarvis/config.json');
+    }
+  }
 
+  const app = Fastify({ logger: false });
   await app.register(cors, { origin: '*' });
 
-  // ── WebSocket ──────────────────────────────────────────────
   const ws = await registerWS(app);
   app.decorate('ws', ws);
 
-  // ── Tools ─────────────────────────────────────────────────
   toolRegistry.register(shellTool);
   toolRegistry.register(filesystemTool);
   toolRegistry.register(spawnAgentTool);
@@ -50,35 +57,28 @@ async function main() {
   toolRegistry.register(browserTool);
   toolRegistry.register(scheduleTool);
 
-  // ── Agent pool ─────────────────────────────────────────────
   const agentPool = createAgentPool(ws);
   app.decorate('agentPool', agentPool);
   setSpawnFn((goal) => agentPool.spawn(goal));
 
-  // ── Jarvis AI ──────────────────────────────────────────────
   const jarvis = createJarvis(ws);
   app.decorate('jarvis', jarvis);
 
-  // ── Scheduler ─────────────────────────────────────────────
   initScheduler(
     (prompt, sessionId) => jarvis.chat(prompt, sessionId, undefined, { speak: true }),
     (event) => ws.broadcast(event as Parameters<typeof ws.broadcast>[0])
   );
 
-  // ── Request logging middleware ─────────────────────────────
-  app.addHook('onRequest', async (req) => {
-    (req as Record<string, unknown>)['_start'] = Date.now();
-  });
+  // Request logging
+  app.addHook('onRequest', async (req) => { (req as Record<string, unknown>)['_start'] = Date.now(); });
   app.addHook('onResponse', async (req, reply) => {
     const start = (req as Record<string, unknown>)['_start'] as number ?? Date.now();
-    const path = req.url;
-    // Skip noisy health/ws polls
-    if (!path.includes('/ws') && !path.includes('/health')) {
-      log.request(req.method, path, reply.statusCode, Date.now() - start);
+    if (!req.url.includes('/ws') && !req.url.includes('/health')) {
+      log.request(req.method, req.url, reply.statusCode, Date.now() - start);
     }
   });
 
-  // ── Routes ────────────────────────────────────────────────
+  await app.register(setupRoutes);
   await app.register(chatRoutes);
   await app.register(agentRoutes);
   await app.register(telemetryRoutes);
@@ -92,79 +92,51 @@ async function main() {
     wsClients: ws.clientCount(), timestamp: Date.now(),
   }));
 
-  // ── Start ─────────────────────────────────────────────────
   await app.listen({ port: PORT, host: '0.0.0.0' });
 
-  // ── Startup diagnostics ────────────────────────────────────
+  // Startup diagnostics
   log.banner(PORT);
-
   log.section('CAPABILITIES');
 
-  // API Key
   const hasKey = !!process.env['ANTHROPIC_API_KEY']?.startsWith('sk-');
-  log.check('Anthropic API Key', hasKey, hasKey ? `sk-...${process.env['ANTHROPIC_API_KEY']?.slice(-4)}` : 'NOT SET — add to .env');
+  log.check('Anthropic API Key', hasKey,
+    hasKey ? `sk-...${process.env['ANTHROPIC_API_KEY']?.slice(-4)} (configured)` : 'NOT SET — configure via HUD at http://localhost:3001');
 
-  // Whisper
   const whisperOk = await checkWhisperAvailable();
-  log.check('Whisper VTT', whisperOk, whisperOk
-    ? '/opt/homebrew/bin/whisper-cli + ggml-base.en.bin'
-    : 'whisper-cli or model not found');
+  log.check('Whisper VTT', whisperOk, whisperOk ? '/opt/homebrew/bin/whisper-cli + ggml-base.en.bin' : 'not found');
 
-  // ffmpeg (needed for audio conversion)
   let ffmpegOk = false;
-  try {
-    const { execSync } = await import('child_process');
-    execSync('ffmpeg -version 2>/dev/null', { timeout: 3000 });
-    ffmpegOk = true;
-  } catch { /* ignore */ }
-  log.check('ffmpeg (audio convert)', ffmpegOk, ffmpegOk ? 'available' : 'install: brew install ffmpeg');
+  try { const { execSync } = await import('child_process'); execSync('ffmpeg -version 2>/dev/null', { timeout: 3000 }); ffmpegOk = true; } catch { /* ignore */ }
+  log.check('ffmpeg', ffmpegOk, ffmpegOk ? 'available' : 'brew install ffmpeg');
 
-  // TTS
   const voiceInfo = await getVoiceInfo();
-  log.check('TTS Voice', true, voiceInfo.kokoroAvailable
-    ? 'Kokoro (local neural — best quality)'
-    : `macOS ${voiceInfo.voice} (British) @ ${voiceInfo.rate} wpm`);
+  log.check('TTS', true, voiceInfo.kokoroAvailable ? 'Kokoro (neural)' : `macOS ${voiceInfo.voice}`);
 
-  // Computer use
   const cuStatus = await checkComputerUse();
-  log.check('Computer Use (nut-js)', cuStatus.available,
-    cuStatus.available ? `${cuStatus.screenSize?.width}x${cuStatus.screenSize?.height} display` : cuStatus.reason ?? 'unavailable');
+  log.check('Computer Use', cuStatus.available, cuStatus.available ? `${cuStatus.screenSize?.width}x${cuStatus.screenSize?.height}` : String(cuStatus.reason));
 
-  // Playwright
   let playwrightOk = false;
-  try {
-    const { chromium } = await import('playwright');
-    const b = await chromium.launch({ headless: true });
-    await b.close();
-    playwrightOk = true;
-  } catch { /* ignore */ }
-  log.check('Browser Control (Playwright)', playwrightOk, playwrightOk ? 'Chromium ready' : 'run: npx playwright install chromium');
+  try { const { chromium } = await import('playwright'); const b = await chromium.launch({ headless: true }); await b.close(); playwrightOk = true; } catch { /* ignore */ }
+  log.check('Playwright Browser', playwrightOk, playwrightOk ? 'Chromium ready' : 'run: npx playwright install chromium');
 
-  // SQLite
   const dbOk = existsSync(`${process.env['HOME']}/.jarvis/jarvis.db`);
-  log.check('SQLite Memory', dbOk, `~/.jarvis/jarvis.db`);
+  log.check('SQLite', dbOk, `~/.jarvis/jarvis.db`);
 
   log.section('TOOLS');
   toolRegistry.all().forEach((t) => log.tool(t.name));
 
   log.section('ROUTES');
+  log.check('GET  /api/setup/status', true, 'API key status');
+  log.check('POST /api/setup/key', true, 'set + validate API key');
   log.check('POST /api/chat', true, 'streaming SSE');
-  log.check('POST /api/voice/transcribe', true, 'whisper.cpp → text');
-  log.check('POST /api/voice/chat', true, 'whisper → Jarvis → TTS');
-  log.check('GET  /api/agents', true, 'agent pool');
-  log.check('GET  /api/jobs', true, 'scheduler');
-  log.check('POST /api/telemetry/event', true, 'ingest external events');
-  log.check('GET  /ws', true, 'WebSocket HUD feed');
+  log.check('POST /api/voice/transcribe', true, 'whisper');
+  log.check('GET  /ws', true, 'WebSocket HUD');
 
   log.ready(PORT);
 
-  // Broadcast online status
   ws.broadcast({
     type: 'status',
-    payload: {
-      message: 'JARVIS v2.0 ONLINE',
-      capabilities: { whisper: whisperOk, ffmpeg: ffmpegOk, computerUse: cuStatus.available, browser: playwrightOk, tts: true },
-    },
+    payload: { message: 'JARVIS ONLINE', apiKeyConfigured: hasKey },
     timestamp: Date.now(),
   });
 }

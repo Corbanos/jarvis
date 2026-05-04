@@ -11,10 +11,58 @@ import { TelemetryFeed } from '@/components/TelemetryFeed';
 import { ArcReactor } from '@/components/ArcReactor';
 import { RingGauge } from '@/components/RingGauge';
 import { SchedulerPanel } from '@/components/SchedulerPanel';
+import { SetupScreen } from '@/components/SetupScreen';
 
+const API = process.env['NEXT_PUBLIC_JARVIS_API'] ?? 'http://localhost:7777';
 type RightTab = 'agents' | 'scheduler' | 'telemetry';
+type AppState = 'checking' | 'setup' | 'ready';
 
 export default function Home() {
+  const [appState, setAppState] = useState<AppState>('checking');
+
+  // Check API key status on load
+  useEffect(() => {
+    fetch(`${API}/api/setup/status`)
+      .then((r) => r.json())
+      .then((data: { configured: boolean; valid: boolean }) => {
+        setAppState(data.configured && data.valid ? 'ready' : 'setup');
+      })
+      .catch(() => {
+        // Server not reachable — show setup anyway so user sees the screen
+        setAppState('setup');
+      });
+  }, []);
+
+  if (appState === 'checking') return <BootScreen />;
+  if (appState === 'setup') return <SetupScreen onComplete={() => setAppState('ready')} />;
+  return <Dashboard />;
+}
+
+function BootScreen() {
+  return (
+    <div style={{
+      position: 'fixed', inset: 0, background: '#000',
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      fontFamily: 'monospace',
+    }}>
+      <div style={{ textAlign: 'center' }}>
+        <div style={{ fontSize: 14, color: '#00e5ff', letterSpacing: '0.3em', marginBottom: 12, opacity: 0.6 }}>
+          J.A.R.V.I.S.
+        </div>
+        <div style={{ display: 'flex', gap: 6, justifyContent: 'center' }}>
+          {[0,1,2].map((i) => (
+            <div key={i} style={{
+              width: 6, height: 6, borderRadius: '50%', background: '#00e5ff',
+              animation: `thinking-pulse 1s ease-in-out ${i * 0.2}s infinite`,
+            }} />
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Dashboard() {
   useJarvisWS();
   const connected = useJarvisStore((s) => s.connected);
   const agents = useJarvisStore((s) => s.agents);
@@ -44,30 +92,19 @@ export default function Home() {
 
   return (
     <div style={{ height: '100vh', width: '100vw', display: 'flex', flexDirection: 'column', background: '#000', overflow: 'hidden', position: 'relative' }}>
-
       <HexGrid />
-
-      {/* Vignette */}
       <div style={{ position: 'fixed', inset: 0, pointerEvents: 'none', zIndex: 1,
         background: 'radial-gradient(ellipse at center, transparent 25%, rgba(0,0,0,0.7) 100%)' }} />
-
-      {/* Blueprint lines */}
       <div style={{ position: 'fixed', inset: 0, pointerEvents: 'none', zIndex: 1,
         backgroundImage: 'repeating-linear-gradient(0deg, rgba(0,229,255,0.012) 0px, transparent 1px, transparent 28px)' }} />
 
       <div style={{ position: 'relative', zIndex: 2, display: 'flex', flexDirection: 'column', height: '100vh' }}>
         <StatusBar />
 
-        <div style={{
-          flex: 1, display: 'grid',
-          gridTemplateColumns: '210px 1fr 250px',
-          gap: 6, padding: 6, minHeight: 0,
-        }}>
+        <div style={{ flex: 1, display: 'grid', gridTemplateColumns: '210px 1fr 250px', gap: 6, padding: 6, minHeight: 0 }}>
 
-          {/* LEFT: Core status + system */}
+          {/* Left column */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-
-            {/* Arc reactor core */}
             <HUDPanel title="CORE STATUS" statusDot={connected ? 'green' : 'red'} active={connected}>
               <div style={{ height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 12, padding: '16px 8px' }}>
                 <ArcReactor />
@@ -81,7 +118,6 @@ export default function Home() {
               </div>
             </HUDPanel>
 
-            {/* System gauges */}
             <HUDPanel title="SYSTEMS" headerRight="STARK OS v4">
               <div style={{ padding: '10px 6px', display: 'flex', flexDirection: 'column', gap: 10, alignItems: 'center' }}>
                 <div style={{ display: 'flex', gap: 6 }}>
@@ -92,15 +128,12 @@ export default function Home() {
                   <RingGauge label="DISK" value={stats.disk} size={60} color="#ff8c00" />
                   <RingGauge label="GPU" value={stats.gpu} size={60} color="#00ff9d" />
                 </div>
-                <div style={{ width: '100%', padding: '0 8px' }}>
-                  <NetworkDisplay upload={stats.net} download={stats.net * 2.3} />
-                </div>
+                <NetworkDisplay upload={stats.net} download={stats.net * 2.3} />
               </div>
             </HUDPanel>
-
           </div>
 
-          {/* CENTER: JARVIS chat */}
+          {/* Center: chat */}
           <HUDPanel
             title="JARVIS INTERFACE — v2.0"
             active={connected}
@@ -114,57 +147,32 @@ export default function Home() {
             <JarvisChat />
           </HUDPanel>
 
-          {/* RIGHT: Tabbed panel */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
-            {/* Tab bar */}
-            <div style={{
-              display: 'flex',
-              borderBottom: '1px solid rgba(0,229,255,0.15)',
-              background: 'rgba(0,4,12,0.95)',
-            }}>
+          {/* Right: tabs */}
+          <div style={{ display: 'flex', flexDirection: 'column' }}>
+            <div style={{ display: 'flex', borderBottom: '1px solid rgba(0,229,255,0.15)', background: 'rgba(0,4,12,0.95)', flexShrink: 0 }}>
               {tabs.map((tab) => (
-                <button
-                  key={tab.key}
-                  onClick={() => setRightTab(tab.key)}
-                  style={{
-                    flex: 1,
-                    padding: '7px 4px',
-                    background: rightTab === tab.key ? 'rgba(0,229,255,0.08)' : 'transparent',
-                    border: 'none',
-                    borderBottom: rightTab === tab.key ? '2px solid var(--accent-primary)' : '2px solid transparent',
-                    color: rightTab === tab.key ? 'var(--accent-primary)' : 'var(--text-dim)',
-                    fontSize: 8,
-                    letterSpacing: '0.15em',
-                    cursor: 'pointer',
-                    fontFamily: 'inherit',
-                    transition: 'all 0.2s',
-                    position: 'relative',
-                  }}
-                >
+                <button key={tab.key} onClick={() => setRightTab(tab.key)} style={{
+                  flex: 1, padding: '7px 4px',
+                  background: rightTab === tab.key ? 'rgba(0,229,255,0.08)' : 'transparent',
+                  border: 'none',
+                  borderBottom: rightTab === tab.key ? '2px solid var(--accent-primary)' : '2px solid transparent',
+                  color: rightTab === tab.key ? 'var(--accent-primary)' : 'var(--text-dim)',
+                  fontSize: 8, letterSpacing: '0.15em', cursor: 'pointer',
+                  fontFamily: 'inherit', transition: 'all 0.2s', position: 'relative',
+                }}>
                   {tab.label}
                   {tab.badge ? (
-                    <span style={{
-                      position: 'absolute', top: 3, right: 6,
-                      background: 'var(--accent-amber)', color: '#000',
-                      borderRadius: '50%', width: 12, height: 12,
-                      fontSize: 7, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700,
-                    }}>{tab.badge}</span>
+                    <span style={{ position: 'absolute', top: 3, right: 6, background: 'var(--accent-amber)', color: '#000', borderRadius: '50%', width: 12, height: 12, fontSize: 7, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700 }}>{tab.badge}</span>
                   ) : null}
                 </button>
               ))}
             </div>
 
-            {/* Tab content */}
             <div style={{ flex: 1, minHeight: 0, position: 'relative' }}>
               {rightTab === 'agents' && (
-                <HUDPanel
-                  title="AGENT NETWORK"
-                  statusDot={activeAgents > 0 ? 'amber' : 'none'}
-                  active={activeAgents > 0}
-                  accentColor={activeAgents > 0 ? '#ff8c00' : '#00e5ff'}
-                  style={{ height: '100%' }}
-                  headerRight={activeAgents > 0 ? `${activeAgents} ACTIVE` : 'STANDBY'}
-                >
+                <HUDPanel title="AGENT NETWORK" statusDot={activeAgents > 0 ? 'amber' : 'none'} active={activeAgents > 0}
+                  accentColor={activeAgents > 0 ? '#ff8c00' : '#00e5ff'} style={{ height: '100%' }}
+                  headerRight={activeAgents > 0 ? `${activeAgents} ACTIVE` : 'STANDBY'}>
                   <AgentSwarm />
                 </HUDPanel>
               )}
@@ -187,14 +195,8 @@ export default function Home() {
   );
 }
 
-// ── Utility components ────────────────────────────
-
-function clamp(v: number, min: number, max: number) {
-  return Math.max(min, Math.min(max, v));
-}
-function rnd(range: number) {
-  return (Math.random() - 0.5) * range;
-}
+function clamp(v: number, min: number, max: number) { return Math.max(min, Math.min(max, v)); }
+function rnd(range: number) { return (Math.random() - 0.5) * range; }
 
 function MiniStat({ label, value, color = 'var(--accent-primary)' }: { label: string; value: string; color?: string }) {
   return (
@@ -213,12 +215,7 @@ function PowerLine({ label, value }: { label: string; value: number }) {
         <span style={{ color: 'var(--accent-bright)', fontWeight: 700 }}>{value}%</span>
       </div>
       <div style={{ height: 3, background: 'rgba(0,229,255,0.08)', borderRadius: 2 }}>
-        <div style={{
-          width: `${value}%`, height: '100%',
-          background: 'linear-gradient(90deg, var(--accent-secondary), var(--accent-bright))',
-          boxShadow: '0 0 8px var(--accent-primary)',
-          borderRadius: 2, transition: 'width 1s ease',
-        }} />
+        <div style={{ width: `${value}%`, height: '100%', background: 'linear-gradient(90deg, var(--accent-secondary), var(--accent-bright))', boxShadow: '0 0 8px var(--accent-primary)', borderRadius: 2 }} />
       </div>
       <div style={{ fontSize: 8, color: 'var(--text-dim)', letterSpacing: '0.1em', marginTop: 3, textAlign: 'center' }}>
         Currently holding steady.
@@ -229,7 +226,7 @@ function PowerLine({ label, value }: { label: string; value: number }) {
 
 function NetworkDisplay({ upload, download }: { upload: number; download: number }) {
   return (
-    <div>
+    <div style={{ width: '100%', padding: '0 8px' }}>
       <div style={{ fontSize: 8, color: 'var(--text-dim)', letterSpacing: '0.15em', marginBottom: 5, textAlign: 'center' }}>NETWORK I/O</div>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
         <div style={{ textAlign: 'center' }}>
