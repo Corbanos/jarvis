@@ -1,8 +1,9 @@
 'use client';
 import { useEffect, useRef, useState, useCallback } from 'react';
 
-const WAKE_WORDS = ['hey jarvis', 'jarvis', 'hey j.a.r.v.i.s', 'okay jarvis'];
-const SILENCE_MS = 2200; // stop recording after this much silence post-wake
+const WAKE_WORDS = ['hey jarvis', 'jarvis', 'okay jarvis'];
+const SILENCE_MS = 2200;        // stop recording after this much silence
+const COOLDOWN_MS = 4000;       // min time between triggers (prevents multi-fire)
 const API = process.env['NEXT_PUBLIC_JARVIS_API'] ?? 'http://localhost:7777';
 
 export type WakeState = 'idle' | 'listening' | 'recording' | 'processing';
@@ -16,44 +17,50 @@ interface UseWakeWordOptions {
 export function useWakeWord({ onTranscript, onStateChange, enabled = true }: UseWakeWordOptions) {
   const [state, setState] = useState<WakeState>('idle');
   const [lastTranscript, setLastTranscript] = useState('');
+
   const recognitionRef = useRef<SpeechRecognition | null>(null);
   const mediaRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const silenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // These are refs so they're always current inside async callbacks
   const recordingRef = useRef(false);
-  const stateRef = useRef<WakeState>('idle');
+  const lastTriggerRef = useRef(0);   // timestamp of last wake-word trigger
+  const stoppedRef = useRef(false);   // cleanup flag
 
   const setWakeState = useCallback((s: WakeState) => {
     setState(s);
-    stateRef.current = s;
     onStateChange?.(s);
   }, [onStateChange]);
 
-  const stopRecording = useCallback(async () => {
-    if (!recordingRef.current) return;
-    recordingRef.current = false;
-
+  const clearSilenceTimer = () => {
     if (silenceTimerRef.current) {
       clearTimeout(silenceTimerRef.current);
       silenceTimerRef.current = null;
     }
+  };
 
+  const stopRecording = useCallback(() => {
+    if (!recordingRef.current) return;
+    recordingRef.current = false;
+    clearSilenceTimer();
     if (mediaRef.current?.state === 'recording') {
       mediaRef.current.stop();
     }
   }, []);
 
-  const startRecording = useCallback(async (stream: MediaStream, commandOnly: string) => {
+  const startRecording = useCallback(async (stream: MediaStream, inlineCommand: string) => {
+    // Hard gate: don't trigger if already recording or in cooldown
     if (recordingRef.current) return;
+    const now = Date.now();
+    if (now - lastTriggerRef.current < COOLDOWN_MS) return;
+
+    lastTriggerRef.current = now;
     recordingRef.current = true;
     setWakeState('recording');
     chunksRef.current = [];
 
-    // If there's already a command after the wake word, use it directly
-    const trimmedCommand = commandOnly.trim();
-
     const recorder = new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus' });
-    chunksRef.current = [];
     mediaRef.current = recorder;
 
     recorder.ondataavailable = (e) => {
@@ -61,26 +68,27 @@ export function useWakeWord({ onTranscript, onStateChange, enabled = true }: Use
     };
 
     recorder.onstop = async () => {
-      if (!recordingRef.current && chunksRef.current.length === 0) return;
       setWakeState('processing');
 
-      const blob = new Blob(chunksRef.current, { type: 'audio/webm' });
-
-      // If we already have a command from speech recognition, use it
-      if (trimmedCommand.length > 2) {
-        onTranscript(trimmedCommand);
+      // If SpeechRecognition already gave us clean text after the wake word, use it directly
+      if (inlineCommand.trim().length > 2) {
+        setLastTranscript(inlineCommand.trim());
+        onTranscript(inlineCommand.trim());
         setWakeState('listening');
         return;
       }
 
-      // Otherwise transcribe the audio
+      // Otherwise transcribe the recorded audio via whisper
+      const blob = new Blob(chunksRef.current, { type: 'audio/webm' });
+      if (blob.size < 500) {
+        setWakeState('listening');
+        return;
+      }
+
       const reader = new FileReader();
       reader.onloadend = async () => {
         const base64 = (reader.result as string).split(',')[1];
-        if (!base64 || blob.size < 1000) {
-          setWakeState('listening');
-          return;
-        }
+        if (!base64) { setWakeState('listening'); return; }
         try {
           const res = await fetch(`${API}/api/voice/transcribe`, {
             method: 'POST',
@@ -89,12 +97,12 @@ export function useWakeWord({ onTranscript, onStateChange, enabled = true }: Use
           });
           const data = await res.json() as { text?: string };
           const text = data.text?.trim() ?? '';
-          if (text && text.length > 1) {
+          if (text.length > 1) {
             setLastTranscript(text);
             onTranscript(text);
           }
         } catch (e) {
-          console.error('[WakeWord] Transcription failed:', e);
+          console.warn('[WakeWord] Transcription failed:', e);
         } finally {
           setWakeState('listening');
         }
@@ -102,26 +110,27 @@ export function useWakeWord({ onTranscript, onStateChange, enabled = true }: Use
       reader.readAsDataURL(blob);
     };
 
-    recorder.start(200); // collect chunks every 200ms
+    recorder.start(200);
 
     // Auto-stop after silence
-    silenceTimerRef.current = setTimeout(() => {
-      stopRecording();
-    }, SILENCE_MS);
+    silenceTimerRef.current = setTimeout(stopRecording, SILENCE_MS);
   }, [onTranscript, setWakeState, stopRecording]);
 
   useEffect(() => {
     if (!enabled) return;
     if (typeof window === 'undefined') return;
 
-    const SpeechRecognition = window.SpeechRecognition || (window as unknown as { webkitSpeechRecognition?: typeof window.SpeechRecognition }).webkitSpeechRecognition;
+    const SpeechRecognition =
+      window.SpeechRecognition ||
+      (window as unknown as { webkitSpeechRecognition?: typeof window.SpeechRecognition }).webkitSpeechRecognition;
+
     if (!SpeechRecognition) {
-      console.warn('[WakeWord] SpeechRecognition not supported in this browser. Use Chrome.');
+      console.warn('[WakeWord] SpeechRecognition not supported — use Chrome/Edge.');
       return;
     }
 
+    stoppedRef.current = false;
     let stream: MediaStream | null = null;
-    let stopped = false;
 
     async function init() {
       try {
@@ -133,58 +142,54 @@ export function useWakeWord({ onTranscript, onStateChange, enabled = true }: Use
 
       const recognition = new SpeechRecognition();
       recognition.continuous = true;
-      recognition.interimResults = true;
+      recognition.interimResults = false; // FINAL results only — prevents multi-fire
       recognition.lang = 'en-US';
-      recognition.maxAlternatives = 3;
+      recognition.maxAlternatives = 2;
       recognitionRef.current = recognition;
 
       recognition.onstart = () => {
-        if (!stopped) setWakeState('listening');
+        if (!stoppedRef.current) setWakeState('listening');
       };
 
       recognition.onresult = (event) => {
-        if (recordingRef.current) return; // already recording, ignore
+        // Only process new final results
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          const result = event.results[i];
+          if (!result?.isFinal) continue;  // skip interim (shouldn't arrive, but belt+suspenders)
 
-        const results = Array.from(event.results).slice(event.resultIndex);
-        for (const result of results) {
-          const transcript = Array.from(result).map((r) => r.transcript).join(' ').toLowerCase().trim();
+          const transcript = Array.from(result)
+            .map((r) => r.transcript)
+            .join(' ')
+            .toLowerCase()
+            .trim();
 
-          // Check for wake word
+          // Already in cooldown or recording — ignore
+          if (recordingRef.current) continue;
+          if (Date.now() - lastTriggerRef.current < COOLDOWN_MS) continue;
+
           const wakeFound = WAKE_WORDS.find((w) => transcript.includes(w));
-          if (wakeFound) {
-            // Extract command portion after the wake word
-            const afterWake = transcript.split(wakeFound).pop()?.trim() ?? '';
-            console.log(`[WakeWord] Wake word detected: "${wakeFound}" → command: "${afterWake}"`);
+          if (!wakeFound) continue;
 
-            // Start recording for the full command
-            startRecording(stream!, afterWake);
+          // Strip wake word to get the command portion
+          const afterWake = transcript.split(wakeFound).pop()?.trim() ?? '';
+          console.log(`[WakeWord] ▶ "${wakeFound}" detected — command: "${afterWake || '(listening…)'}"`);
 
-            // Reset silence timer on each new result while recording
-            if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
-            silenceTimerRef.current = setTimeout(() => stopRecording(), SILENCE_MS);
-            break;
-          }
-
-          // If already recording, extend silence timer on speech
-          if (recordingRef.current && result.isFinal) {
-            if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
-            silenceTimerRef.current = setTimeout(() => stopRecording(), SILENCE_MS);
-          }
+          startRecording(stream!, afterWake);
+          break; // only trigger once per result batch
         }
       };
 
       recognition.onerror = (e) => {
-        // Silently ignore transient/expected errors — onend will auto-restart
-        const ignored = ['no-speech', 'aborted', 'network', 'audio-capture'];
-        if (ignored.includes(e.error)) return;
-        console.warn('[WakeWord] Recognition error (will retry):', e.error);
+        const silent = ['no-speech', 'aborted', 'network', 'audio-capture'];
+        if (!silent.includes(e.error)) {
+          console.warn('[WakeWord] Error (will retry):', e.error);
+        }
       };
 
       recognition.onend = () => {
-        // Auto-restart to keep always-on listening going
-        if (!stopped) {
+        if (!stoppedRef.current) {
           setTimeout(() => {
-            try { recognition.start(); } catch { /* already started */ }
+            try { recognition.start(); } catch { /* already running */ }
           }, 500);
         }
       };
@@ -195,17 +200,17 @@ export function useWakeWord({ onTranscript, onStateChange, enabled = true }: Use
     init();
 
     return () => {
-      stopped = true;
+      stoppedRef.current = true;
+      recordingRef.current = false;
+      clearSilenceTimer();
       try { recognitionRef.current?.stop(); } catch { /* ignore */ }
       stream?.getTracks().forEach((t) => t.stop());
-      if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
     };
-  }, [enabled, startRecording, stopRecording, setWakeState]);
+  }, [enabled, startRecording, setWakeState]);
 
   return { state, lastTranscript };
 }
 
-// Extend window type for browser compatibility
 declare global {
   interface Window {
     SpeechRecognition: typeof SpeechRecognition;
