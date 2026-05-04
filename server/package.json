@@ -1,0 +1,27 @@
+{
+  "name": "jarvis-server",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "latest",
+    "@fastify/cors": "latest",
+    "@fastify/websocket": "latest",
+    "better-sqlite3": "latest",
+    "dotenv": "latest",
+    "fastify": "^5",
+    "uuid": "latest",
+    "zod": "latest"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "latest",
+    "@types/node": "latest",
+    "@types/uuid": "latest",
+    "tsx": "latest",
+    "typescript": "latest"
+  }
+}

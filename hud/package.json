@@ -1,0 +1,29 @@
+{
+  "name": "jarvis-hud",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev -p 3001",
+    "build": "next build",
+    "start": "next start -p 3001"
+  },
+  "dependencies": {
+    "next": "15",
+    "react": "^19",
+    "react-dom": "^19",
+    "d3": "^7",
+    "zustand": "^5",
+    "framer-motion": "^12",
+    "lucide-react": "latest"
+  },
+  "devDependencies": {
+    "@types/d3": "^7",
+    "@types/node": "latest",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "typescript": "latest",
+    "tailwindcss": "^4",
+    "@tailwindcss/postcss": "^4",
+    "postcss": "latest"
+  }
+}
