@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useJarvisWS } from '@/hooks/useJarvisWS';
 import { useChatHistory } from '@/hooks/useChatHistory';
 import { useJarvisStore } from '@/lib/store';
@@ -61,6 +61,16 @@ function Dashboard() {
   const activeAgents = agents.filter((a) => a.status === 'running' || a.status === 'spawning').length;
   const [rightTab, setRightTab] = useState<RightTab>('agents');
   const [stats, setStats] = useState({ cpu: 18, ram: 52, disk: 64, gpu: 31, temp: 54, net: 12 });
+
+  // Auto-switch to agent tab when a new agent is spawned
+  const agentCount = agents.length;
+  const lastAgentCountRef = useRef(0);
+  useEffect(() => {
+    if (agentCount > lastAgentCountRef.current) {
+      setRightTab('agents');
+    }
+    lastAgentCountRef.current = agentCount;
+  }, [agentCount]);
 
   useEffect(() => {
     const t = setInterval(() => {

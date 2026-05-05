@@ -1,132 +1,193 @@
 'use client';
-import { useEffect, useRef } from 'react';
+import { useState } from 'react';
 import { useJarvisStore, type AgentRecord } from '@/lib/store';
+
+const API = process.env['NEXT_PUBLIC_JARVIS_API'] ?? 'http://localhost:7777';
 
 export function AgentSwarm() {
   const agents = useJarvisStore((s) => s.agents);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const animRef = useRef<number>(0);
-
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-
-    const W = canvas.offsetWidth;
-    const H = canvas.offsetHeight;
-    canvas.width = W;
-    canvas.height = H;
-
-    const cx = W / 2;
-    const cy = H / 2;
-
-    function draw() {
-      if (!ctx || !canvas) return;
-      ctx.clearRect(0, 0, W, H);
-
-      // Draw center node (JARVIS)
-      drawNode(ctx, cx, cy, 'JARVIS', 'running', 18);
-
-      // Draw agent nodes in a circle
-      const active = agents.slice(-8); // max 8 visible
-      active.forEach((agent, i) => {
-        const angle = (i / Math.max(active.length, 1)) * Math.PI * 2 - Math.PI / 2;
-        const r = Math.min(W, H) * 0.3;
-        const x = cx + Math.cos(angle) * r;
-        const y = cy + Math.sin(angle) * r;
-
-        // Line from center to node
-        ctx.beginPath();
-        ctx.moveTo(cx, cy);
-        ctx.lineTo(x, y);
-        ctx.strokeStyle = agent.status === 'running'
-          ? 'rgba(0,212,255,0.3)'
-          : agent.status === 'complete'
-          ? 'rgba(0,255,136,0.2)'
-          : 'rgba(255,59,59,0.2)';
-        ctx.lineWidth = 1;
-        ctx.setLineDash([4, 6]);
-        ctx.stroke();
-        ctx.setLineDash([]);
-
-        drawNode(ctx, x, y, `A-${agent.id.slice(0, 4).toUpperCase()}`, agent.status, 10);
-      });
-
-      animRef.current = requestAnimationFrame(draw);
-    }
-
-    draw();
-    return () => cancelAnimationFrame(animRef.current);
-  }, [agents]);
+  const sortedAgents = [...agents].reverse(); // newest first
 
   return (
-    <div style={{ height: '100%', padding: 8, display: 'flex', flexDirection: 'column', gap: 8 }}>
-      <canvas
-        ref={canvasRef}
-        style={{ width: '100%', flex: 1, display: 'block' }}
-      />
+    <div style={{ height: '100%', overflowY: 'auto', padding: 8, display: 'flex', flexDirection: 'column', gap: 6 }}>
       {agents.length === 0 && (
-        <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-dim)', fontSize: 10, letterSpacing: '0.15em', pointerEvents: 'none' }}>
-          NO ACTIVE AGENTS
+        <div style={{ color: 'var(--text-dim)', fontSize: 10, letterSpacing: '0.15em', textAlign: 'center', marginTop: 30 }}>
+          NO AGENTS DEPLOYED
         </div>
       )}
-      {/* Agent list */}
-      <div style={{ overflowY: 'auto', maxHeight: 80, display: 'flex', flexDirection: 'column', gap: 4 }}>
-        {agents.slice(-5).reverse().map((a) => (
-          <AgentRow key={a.id} agent={a} />
-        ))}
-      </div>
+      {sortedAgents.map((agent) => <AgentCard key={agent.id} agent={agent} />)}
     </div>
   );
 }
 
-function drawNode(ctx: CanvasRenderingContext2D, x: number, y: number, label: string, status: string, r: number) {
-  const color = status === 'running' || status === 'spawning'
-    ? '#00d4ff'
-    : status === 'complete'
-    ? '#00ff88'
-    : '#ff3b3b';
+function AgentCard({ agent }: { agent: AgentRecord }) {
+  const [expanded, setExpanded] = useState(agent.status === 'running');
 
-  // Glow
-  const grd = ctx.createRadialGradient(x, y, 0, x, y, r * 2);
-  grd.addColorStop(0, color + '40');
-  grd.addColorStop(1, 'transparent');
-  ctx.beginPath();
-  ctx.arc(x, y, r * 2, 0, Math.PI * 2);
-  ctx.fillStyle = grd;
-  ctx.fill();
+  const isRunning = agent.status === 'running' || agent.status === 'spawning';
+  const isComplete = agent.status === 'complete';
+  const isFailed = agent.status === 'failed';
 
-  // Circle
-  ctx.beginPath();
-  ctx.arc(x, y, r, 0, Math.PI * 2);
-  ctx.strokeStyle = color;
-  ctx.lineWidth = 1.5;
-  ctx.stroke();
-  ctx.fillStyle = 'rgba(0,10,25,0.8)';
-  ctx.fill();
+  const accent = isRunning ? '#ff8c00' : isComplete ? '#00ff9d' : isFailed ? '#ff3b3b' : '#00e5ff';
 
-  // Label
-  ctx.fillStyle = color;
-  ctx.font = `${Math.max(r * 0.6, 8)}px monospace`;
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText(label, x, y);
-}
-
-function AgentRow({ agent }: { agent: AgentRecord }) {
-  const color = agent.status === 'running' ? 'var(--accent-primary)'
-    : agent.status === 'complete' ? 'var(--accent-green)'
-    : agent.status === 'failed' ? 'var(--accent-red)'
-    : 'var(--accent-amber)';
+  const elapsed = agent.completedAt
+    ? `${((agent.completedAt - agent.startedAt) / 1000).toFixed(1)}s`
+    : `${((Date.now() - agent.startedAt) / 1000).toFixed(0)}s`;
 
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 9, letterSpacing: '0.08em' }}>
-      <div style={{ width: 5, height: 5, borderRadius: '50%', background: color, flexShrink: 0 }} />
-      <span style={{ color: 'var(--text-secondary)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-        {agent.goal.slice(0, 40)}
-      </span>
-      <span style={{ color, flexShrink: 0 }}>{agent.status.toUpperCase()}</span>
+    <div style={{
+      background: 'rgba(0,12,24,0.85)',
+      border: `1px solid ${accent}30`,
+      borderRadius: 3,
+      overflow: 'hidden',
+      boxShadow: isRunning ? `0 0 12px ${accent}20` : 'none',
+      animation: isRunning ? 'pulse-glow 2s infinite' : 'none',
+    }}>
+      {/* Header — clickable to expand */}
+      <div
+        onClick={() => setExpanded(!expanded)}
+        style={{
+          padding: '7px 9px',
+          cursor: 'pointer',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 7,
+          borderBottom: expanded ? `1px solid ${accent}20` : 'none',
+        }}
+      >
+        {/* Status indicator */}
+        <div style={{
+          width: 7, height: 7, borderRadius: '50%',
+          background: accent,
+          boxShadow: `0 0 6px ${accent}`,
+          animation: isRunning ? 'pulse-glow 1.2s infinite' : 'none',
+          flexShrink: 0,
+        }} />
+
+        {/* ID + status */}
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{
+            fontSize: 9,
+            color: accent,
+            fontWeight: 700,
+            letterSpacing: '0.1em',
+            display: 'flex',
+            justifyContent: 'space-between',
+            gap: 6,
+          }}>
+            <span>A-{agent.id.slice(0, 6).toUpperCase()}</span>
+            <span style={{ color: 'var(--text-dim)' }}>{elapsed}</span>
+          </div>
+          <div style={{
+            fontSize: 9,
+            color: 'var(--text-secondary)',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+            marginTop: 1,
+          }}>
+            {agent.goal}
+          </div>
+        </div>
+
+        {/* Expand chevron */}
+        <span style={{ color: 'var(--text-dim)', fontSize: 8, transform: expanded ? 'rotate(90deg)' : 'rotate(0)', transition: 'transform 0.2s' }}>▶</span>
+      </div>
+
+      {/* Live progress (when expanded or running) */}
+      {expanded && (
+        <div style={{ padding: '7px 9px', background: 'rgba(0,4,12,0.5)', display: 'flex', flexDirection: 'column', gap: 6 }}>
+
+          {/* Currently executing tool */}
+          {agent.currentTool && (
+            <div style={{
+              fontSize: 8, letterSpacing: '0.15em',
+              color: 'var(--accent-amber)',
+              display: 'flex', alignItems: 'center', gap: 5,
+            }}>
+              <span style={{ animation: 'pulse-glow 0.8s infinite' }}>⟐</span>
+              EXECUTING · {agent.currentTool.toUpperCase()}
+            </div>
+          )}
+
+          {/* Live token stream — last 200 chars */}
+          {agent.liveText && (
+            <div style={{
+              fontSize: 9,
+              color: 'var(--text-primary)',
+              background: 'rgba(0,229,255,0.04)',
+              border: '1px solid rgba(0,229,255,0.1)',
+              borderRadius: 2,
+              padding: '5px 7px',
+              maxHeight: 80,
+              overflow: 'hidden',
+              fontFamily: 'inherit',
+              lineHeight: 1.4,
+              whiteSpace: 'pre-wrap',
+              wordBreak: 'break-word',
+            }}>
+              {tail(agent.liveText, 240)}
+              {isRunning && <span className="cursor-blink" style={{ color: 'var(--accent-primary)' }}>█</span>}
+            </div>
+          )}
+
+          {/* Tool log */}
+          {agent.logs.length > 0 && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+              {agent.logs.slice(-5).map((line, i) => (
+                <div key={i} style={{
+                  fontSize: 8,
+                  color: line.startsWith('▶') ? 'var(--accent-amber)' : 'var(--text-secondary)',
+                  letterSpacing: '0.02em',
+                  overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                }}>
+                  {line}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Summary on complete */}
+          {agent.summary && (
+            <div style={{
+              fontSize: 9,
+              color: isComplete ? 'var(--accent-green)' : 'var(--accent-red)',
+              padding: '5px 7px',
+              background: isComplete ? 'rgba(0,255,157,0.05)' : 'rgba(255,59,59,0.05)',
+              border: `1px solid ${isComplete ? 'rgba(0,255,157,0.2)' : 'rgba(255,59,59,0.2)'}`,
+              borderRadius: 2,
+              lineHeight: 1.5,
+            }}>
+              {agent.summary}
+            </div>
+          )}
+
+          {/* Kill button for running agents */}
+          {isRunning && (
+            <button
+              onClick={() => fetch(`${API}/api/agents/${agent.id}`, { method: 'DELETE' })}
+              style={{
+                background: 'rgba(255,59,59,0.08)',
+                border: '1px solid rgba(255,59,59,0.3)',
+                color: '#ff5577',
+                fontSize: 8,
+                letterSpacing: '0.2em',
+                padding: '4px 8px',
+                borderRadius: 2,
+                cursor: 'pointer',
+                fontFamily: 'inherit',
+                fontWeight: 700,
+                alignSelf: 'flex-start',
+              }}
+            >
+              ✕ ABORT
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
+}
+
+function tail(s: string, n: number): string {
+  return s.length > n ? '…' + s.slice(-n) : s;
 }

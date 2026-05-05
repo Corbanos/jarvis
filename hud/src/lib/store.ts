@@ -19,7 +19,11 @@ export interface AgentRecord {
   goal: string;
   status: string;
   startedAt: number;
+  completedAt?: number;
   logs: string[];
+  liveText?: string;     // streaming token output
+  currentTool?: string;
+  summary?: string;
 }
 
 export interface TelemetryRecord {
@@ -46,6 +50,10 @@ interface JarvisState {
   addToolCall: (t: ToolCallRecord) => void;
   addAgent: (a: AgentRecord) => void;
   updateAgent: (id: string, patch: Partial<AgentRecord> & { logs?: string[] }) => void;
+  appendAgentToken: (id: string, token: string) => void;
+  setAgentTool: (id: string, tool: string | undefined) => void;
+  agentLog: (id: string, log: string) => void;
+  completeAgent: (id: string, status: string, summary?: string) => void;
   addTelemetry: (t: TelemetryRecord) => void;
 }
 
@@ -84,6 +92,36 @@ export const useJarvisStore = create<JarvisState>((set) => ({
         const newLogs = patch.logs ? [...a.logs, ...patch.logs] : a.logs;
         return { ...a, ...patch, logs: newLogs };
       }),
+    })),
+
+  appendAgentToken: (id, token) =>
+    set((s) => ({
+      agents: s.agents.map((a) =>
+        a.id === id ? { ...a, liveText: (a.liveText ?? '') + token } : a
+      ),
+    })),
+
+  setAgentTool: (id, tool) =>
+    set((s) => ({
+      agents: s.agents.map((a) =>
+        a.id === id ? { ...a, currentTool: tool } : a
+      ),
+    })),
+
+  agentLog: (id, logLine) =>
+    set((s) => ({
+      agents: s.agents.map((a) =>
+        a.id === id ? { ...a, logs: [...a.logs, logLine].slice(-50) } : a
+      ),
+    })),
+
+  completeAgent: (id, status, summary) =>
+    set((s) => ({
+      agents: s.agents.map((a) =>
+        a.id === id
+          ? { ...a, status, summary, currentTool: undefined, completedAt: Date.now() }
+          : a
+      ),
     })),
 
   addTelemetry: (t) =>
