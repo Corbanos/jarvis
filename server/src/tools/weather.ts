@@ -24,7 +24,7 @@ It's currently 64 degrees and partly cloudy in San Francisco, sir. Pleasant even
   input_schema: {
     type: 'object',
     properties: {
-      location: { type: 'string', description: 'City name or "lat,lon" (default: auto-detect from IP)' },
+      location: { type: 'string', description: 'City name or "lat,lon". Omit (do NOT pass any value) to auto-detect from the operator\'s IP location.' },
     },
   },
   async handler(input) {
@@ -44,11 +44,46 @@ It's currently 64 degrees and partly cloudy in San Francisco, sir. Pleasant even
         lat = r.latitude; lon = r.longitude;
         displayName = [r.name, r.admin1, r.country].filter(Boolean).join(', ');
       } else {
-        // Auto-detect via IP
-        const ipRes = await fetch('https://ipapi.co/json/');
-        const ip = await ipRes.json() as { latitude: number; longitude: number; city: string; region: string; country_name: string };
-        lat = ip.latitude; lon = ip.longitude;
-        displayName = `${ip.city}, ${ip.region}`;
+        // Auto-detect via IP — try multiple providers so a single rate-limit
+        // doesn't kill the tool.
+        const fallbacks: Array<{ url: string; pick: (j: any) => { lat: number; lon: number; name: string } | null }> = [
+          {
+            url: 'https://ipapi.co/json/',
+            pick: (j) => (j && typeof j.latitude === 'number' && typeof j.longitude === 'number')
+              ? { lat: j.latitude, lon: j.longitude, name: [j.city, j.region].filter(Boolean).join(', ') }
+              : null,
+          },
+          {
+            url: 'https://ipwho.is/',
+            pick: (j) => (j && j.success !== false && typeof j.latitude === 'number' && typeof j.longitude === 'number')
+              ? { lat: j.latitude, lon: j.longitude, name: [j.city, j.region].filter(Boolean).join(', ') }
+              : null,
+          },
+          {
+            url: 'https://geolocation-db.com/json/',
+            pick: (j) => (j && typeof j.latitude === 'number' && typeof j.longitude === 'number')
+              ? { lat: j.latitude, lon: j.longitude, name: [j.city, j.state].filter(Boolean).join(', ') || (j.country_name as string) }
+              : null,
+          },
+        ];
+
+        let resolved: { lat: number; lon: number; name: string } | null = null;
+        for (const f of fallbacks) {
+          try {
+            const r = await fetch(f.url, { signal: AbortSignal.timeout(4000) });
+            if (!r.ok) continue;
+            const j = await r.json();
+            const got = f.pick(j);
+            if (got) { resolved = got; break; }
+          } catch { /* try next */ }
+        }
+
+        if (!resolved) {
+          // Final fallback: Los Angeles (operator's known timezone is America/Los_Angeles).
+          resolved = { lat: 34.0522, lon: -118.2437, name: 'Los Angeles, CA' };
+        }
+
+        lat = resolved.lat; lon = resolved.lon; displayName = resolved.name;
       }
 
       // Fetch weather
