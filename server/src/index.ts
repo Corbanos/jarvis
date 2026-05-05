@@ -11,6 +11,7 @@ import { spawnAgentTool, setSpawnFn } from './tools/spawn-agent.js';
 import { computerTool } from './tools/computer.js';
 import { browserTool } from './tools/browser.js';
 import { scheduleTool } from './tools/schedule.js';
+import { weatherTool } from './tools/weather.js';
 import { chatRoutes } from './routes/chat.js';
 import { agentRoutes } from './routes/agents.js';
 import { telemetryRoutes } from './routes/telemetry.js';
@@ -56,6 +57,7 @@ async function main() {
   toolRegistry.register(computerTool);
   toolRegistry.register(browserTool);
   toolRegistry.register(scheduleTool);
+  toolRegistry.register(weatherTool);
 
   const agentPool = createAgentPool(ws);
   app.decorate('agentPool', agentPool);

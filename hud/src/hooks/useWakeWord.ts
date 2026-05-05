@@ -57,6 +57,12 @@ export function useWakeWord({ onTranscript, onStateChange, enabled = true }: Use
 
     recorder.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data); };
 
+    recorder.onerror = (e) => {
+      console.warn('[WakeWord] MediaRecorder error:', e);
+      _isRecording = false;
+      setWakeState('listening');
+    };
+
     recorder.onstop = async () => {
       _isRecording = false;
       setWakeState('processing');
@@ -113,6 +119,9 @@ export function useWakeWord({ onTranscript, onStateChange, enabled = true }: Use
     }
 
     stoppedRef.current = false;
+    // Reset module-level locks (defensive — survives any prior bad state)
+    _isRecording = false;
+    _lastTriggerAt = 0;
     let localStream: MediaStream | null = null;
 
     async function init() {
@@ -131,29 +140,37 @@ export function useWakeWord({ onTranscript, onStateChange, enabled = true }: Use
       recognition.maxAlternatives = 1;
 
       recognition.onstart = () => {
+        console.log('[WakeWord] ✓ Speech recognition ACTIVE — say "Hey Jarvis"');
         if (!stoppedRef.current) setWakeState('listening');
       };
 
       recognition.onresult = (event) => {
         for (let i = event.resultIndex; i < event.results.length; i++) {
           const result = event.results[i];
-          // Only process final results
           if (!result?.isFinal) continue;
 
           const transcript = result[0]?.transcript.toLowerCase().trim() ?? '';
           if (!transcript) continue;
 
-          // Gate: don't trigger if in cooldown or recording
-          if (!canTrigger()) continue;
+          // ALWAYS log heard text so debugging is easy
+          console.log(`[WakeWord] heard: "${transcript}"`);
+
+          if (!canTrigger()) {
+            console.log('[WakeWord]   (in cooldown or already recording — ignored)');
+            continue;
+          }
 
           const wakeFound = WAKE_WORDS.find((w) => transcript.includes(w));
-          if (!wakeFound) continue;
+          if (!wakeFound) {
+            console.log('[WakeWord]   (no wake word match — keep listening)');
+            continue;
+          }
 
           const afterWake = transcript.split(wakeFound).pop()?.trim() ?? '';
-          console.log(`[WakeWord] ▶ wake="${wakeFound}" command="${afterWake || '(listening)'}"`);
+          console.log(`[WakeWord] ▶ TRIGGER wake="${wakeFound}" command="${afterWake || '(none — recording for command)'}"`);
 
           triggerCommand(localStream!, afterWake);
-          break; // one trigger per result batch, always
+          break;
         }
       };
 

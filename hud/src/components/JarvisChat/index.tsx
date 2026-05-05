@@ -3,6 +3,8 @@ import { useRef, useEffect, useState, KeyboardEvent } from 'react';
 import { useJarvisStore } from '@/lib/store';
 import { useJarvisChat } from '@/hooks/useJarvisChat';
 import { useWakeWord, type WakeState } from '@/hooks/useWakeWord';
+import { useJarvisTTS } from '@/hooks/useJarvisTTS';
+import { JarvisRichResponse } from '@/components/JarvisCards';
 
 export function JarvisChat() {
   const messages = useJarvisStore((s) => s.messages);
@@ -12,6 +14,8 @@ export function JarvisChat() {
   const [input, setInput] = useState('');
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+
+  useJarvisTTS();
 
   const { state: wakeState, lastTranscript } = useWakeWord({
     onTranscript: (text) => {
@@ -274,9 +278,9 @@ function MessageBubble({ role, text }: { role: string; text: string; id: string;
         border: `1px solid ${isUser ? 'rgba(255,140,0,0.15)' : 'rgba(0,229,255,0.1)'}`,
         borderRadius: isUser ? '8px 2px 8px 8px' : '2px 8px 8px 8px',
         padding: '10px 14px', fontSize: 12, color: 'var(--text-primary)',
-        lineHeight: 1.7, maxWidth: '88%', whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+        lineHeight: 1.7, maxWidth: '88%', wordBreak: 'break-word',
       }}>
-        {text}
+        {isUser ? text : <JarvisRichResponse text={text} />}
       </div>
     </div>
   );

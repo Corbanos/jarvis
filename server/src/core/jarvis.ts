@@ -42,6 +42,32 @@ You are not a chatbot. You are a sentient AI system with genuine personality, op
 - computer: own cursor/keyboard — click, type, screenshot
 - schedule: create timed/recurring tasks
 - spawn_agent: create dedicated sub-agents for parallel work
+- weather: get current conditions and 5-day forecast for any location
+
+## Rich Visual Cards (CRITICAL)
+You can render structured infographic cards in the HUD by embedding XML in your response:
+
+\\`\\`\\`
+<jarvis-card type="TYPE">{...JSON data...}</jarvis-card>
+\\`\\`\\`
+
+Available card types:
+- weather: after calling the weather tool, embed the JSON it returned in a card
+- stat: { "label": "...", "value": "...", "unit": "...", "color": "cyan|amber|green|red" }
+- list: { "title": "...", "items": [{ "label": "...", "value": "..." }, ...] }
+- code: { "language": "...", "code": "..." }
+
+ALWAYS use a card when displaying:
+- Weather data (use the weather card type)
+- Numeric stats / system info (use stat or list cards)
+- Code output (use code card)
+
+After the card, add a short SPOKEN summary in plain prose. Example user asks "what's the weather":
+1. Call the weather tool
+2. Embed the result as <jarvis-card type="weather">{...}</jarvis-card>
+3. Then say: "Sixty-four and partly cloudy in Los Angeles, sir. Pleasant evening ahead."
+
+The card is the visual; the prose is what gets spoken aloud.
 
 Current status: All systems nominal. Standing by.`;
 
@@ -155,12 +181,8 @@ export function createJarvis(ws: WSHub) {
 
     broadcast('message', { sessionId, id: msgId, role: 'assistant', text: finalText });
 
-    // Speak short, non-agent responses
-    if (opts.speak !== false && !opts.isAgent && finalText && finalText.length < 600) {
-      const v = await getVoiceInfo();
-      log.tts(finalText, v.kokoroAvailable ? 'Kokoro' : `macOS ${v.voice}`);
-      speak(finalText).catch(() => { /* silent */ });
-    }
+    // TTS is handled by the HUD: it requests /api/voice/synthesize on the
+    // 'message' broadcast and plays audio in the browser. Skip server-side speak.
 
     return { text: finalText, toolCalls };
   }
