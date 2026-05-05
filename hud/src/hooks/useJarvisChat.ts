@@ -4,33 +4,40 @@ import { useJarvisStore } from '@/lib/store';
 import { v4 as uuid } from 'uuid';
 
 const API = process.env['NEXT_PUBLIC_JARVIS_API'] ?? 'http://localhost:7777';
-const DEDUP_MS = 2000; // ignore identical messages within this window
+
+// Module-level in-flight guard — never stale, survives re-renders
+let _sending = false;
+let _lastSentText = '';
+let _lastSentAt = 0;
+const DEDUP_MS = 3000;
 
 export function useJarvisChat() {
   const [loading, setLoading] = useState(false);
   const addMessage = useJarvisStore((s) => s.addMessage);
   const clearThinking = useJarvisStore((s) => s.clearThinking);
-  const lastSentRef = useRef<{ text: string; ts: number } | null>(null);
 
   const send = useCallback(async (text: string, sessionId = 'default') => {
     const trimmed = text.trim();
-    if (!trimmed || loading) return;
+    if (!trimmed) return;
 
-    // Dedup: ignore same message sent within DEDUP_MS
-    const now = Date.now();
-    if (
-      lastSentRef.current &&
-      lastSentRef.current.text === trimmed &&
-      now - lastSentRef.current.ts < DEDUP_MS
-    ) {
-      console.warn('[Chat] Duplicate message suppressed:', trimmed);
+    // Module-level guard — not subject to React closure staleness
+    if (_sending) {
+      console.warn('[Chat] Already sending — ignored');
       return;
     }
-    lastSentRef.current = { text: trimmed, ts: now };
+    const now = Date.now();
+    if (trimmed === _lastSentText && now - _lastSentAt < DEDUP_MS) {
+      console.warn('[Chat] Duplicate suppressed:', trimmed.slice(0, 40));
+      return;
+    }
+
+    _sending = true;
+    _lastSentText = trimmed;
+    _lastSentAt = now;
+    setLoading(true);
 
     addMessage({ id: uuid(), role: 'user', text: trimmed, timestamp: now });
     clearThinking();
-    setLoading(true);
 
     try {
       const res = await fetch(`${API}/api/chat`, {
@@ -38,21 +45,21 @@ export function useJarvisChat() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ message: trimmed, sessionId }),
       });
-
       if (!res.body) throw new Error('No response body');
       const reader = res.body.getReader();
-      const decoder = new TextDecoder();
+      const dec = new TextDecoder();
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
-        void decoder.decode(value); // SSE handled via WebSocket
+        void dec.decode(value); // tokens arrive via WebSocket
       }
     } catch (err) {
       addMessage({ id: uuid(), role: 'assistant', text: `System error: ${err}`, timestamp: Date.now() });
     } finally {
+      _sending = false;
       setLoading(false);
     }
-  }, [loading, addMessage, clearThinking]);
+  }, [addMessage, clearThinking]);
 
   return { send, loading };
 }

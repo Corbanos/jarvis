@@ -2,11 +2,22 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 
 const WAKE_WORDS = ['hey jarvis', 'jarvis', 'okay jarvis'];
-const SILENCE_MS = 2200;        // stop recording after this much silence
-const COOLDOWN_MS = 4000;       // min time between triggers (prevents multi-fire)
+const SILENCE_MS = 2200;
+const COOLDOWN_MS = 5000;
 const API = process.env['NEXT_PUBLIC_JARVIS_API'] ?? 'http://localhost:7777';
 
 export type WakeState = 'idle' | 'listening' | 'recording' | 'processing';
+
+// ── Module-level locks (survive React re-mounts / StrictMode double-invoke) ──
+let _isRecording = false;
+let _lastTriggerAt = 0;
+let _activeStream: MediaStream | null = null;
+
+function canTrigger(): boolean {
+  if (_isRecording) return false;
+  if (Date.now() - _lastTriggerAt < COOLDOWN_MS) return false;
+  return true;
+}
 
 interface UseWakeWordOptions {
   onTranscript: (text: string) => void;
@@ -17,16 +28,8 @@ interface UseWakeWordOptions {
 export function useWakeWord({ onTranscript, onStateChange, enabled = true }: UseWakeWordOptions) {
   const [state, setState] = useState<WakeState>('idle');
   const [lastTranscript, setLastTranscript] = useState('');
-
-  const recognitionRef = useRef<SpeechRecognition | null>(null);
-  const mediaRef = useRef<MediaRecorder | null>(null);
-  const chunksRef = useRef<Blob[]>([]);
   const silenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  // These are refs so they're always current inside async callbacks
-  const recordingRef = useRef(false);
-  const lastTriggerRef = useRef(0);   // timestamp of last wake-word trigger
-  const stoppedRef = useRef(false);   // cleanup flag
+  const stoppedRef = useRef(false);
 
   const setWakeState = useCallback((s: WakeState) => {
     setState(s);
@@ -34,91 +37,71 @@ export function useWakeWord({ onTranscript, onStateChange, enabled = true }: Use
   }, [onStateChange]);
 
   const clearSilenceTimer = () => {
-    if (silenceTimerRef.current) {
-      clearTimeout(silenceTimerRef.current);
-      silenceTimerRef.current = null;
-    }
+    if (silenceTimerRef.current) { clearTimeout(silenceTimerRef.current); silenceTimerRef.current = null; }
   };
 
-  const stopRecording = useCallback(() => {
-    if (!recordingRef.current) return;
-    recordingRef.current = false;
+  const stopRecording = useCallback((recorder: MediaRecorder) => {
     clearSilenceTimer();
-    if (mediaRef.current?.state === 'recording') {
-      mediaRef.current.stop();
-    }
+    if (recorder.state === 'recording') recorder.stop();
   }, []);
 
-  const startRecording = useCallback(async (stream: MediaStream, inlineCommand: string) => {
-    // Hard gate: don't trigger if already recording or in cooldown
-    if (recordingRef.current) return;
-    const now = Date.now();
-    if (now - lastTriggerRef.current < COOLDOWN_MS) return;
+  const triggerCommand = useCallback((stream: MediaStream, inlineCommand: string) => {
+    if (!canTrigger()) return;
 
-    lastTriggerRef.current = now;
-    recordingRef.current = true;
+    _isRecording = true;
+    _lastTriggerAt = Date.now();
     setWakeState('recording');
-    chunksRef.current = [];
 
+    const chunks: Blob[] = [];
     const recorder = new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus' });
-    mediaRef.current = recorder;
 
-    recorder.ondataavailable = (e) => {
-      if (e.data.size > 0) chunksRef.current.push(e.data);
-    };
+    recorder.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data); };
 
     recorder.onstop = async () => {
+      _isRecording = false;
       setWakeState('processing');
 
-      // If SpeechRecognition already gave us clean text after the wake word, use it directly
+      // Use the inline text from SpeechRecognition if it's meaningful
       if (inlineCommand.trim().length > 2) {
-        setLastTranscript(inlineCommand.trim());
-        onTranscript(inlineCommand.trim());
+        const text = inlineCommand.trim();
+        setLastTranscript(text);
+        onTranscript(text);
         setWakeState('listening');
         return;
       }
 
-      // Otherwise transcribe the recorded audio via whisper
-      const blob = new Blob(chunksRef.current, { type: 'audio/webm' });
-      if (blob.size < 500) {
-        setWakeState('listening');
-        return;
-      }
+      // Otherwise send audio to whisper
+      const blob = new Blob(chunks, { type: 'audio/webm' });
+      if (blob.size < 500) { setWakeState('listening'); return; }
 
-      const reader = new FileReader();
-      reader.onloadend = async () => {
-        const base64 = (reader.result as string).split(',')[1];
-        if (!base64) { setWakeState('listening'); return; }
-        try {
-          const res = await fetch(`${API}/api/voice/transcribe`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ audio: base64, mimeType: 'audio/webm' }),
-          });
-          const data = await res.json() as { text?: string };
-          const text = data.text?.trim() ?? '';
-          if (text.length > 1) {
-            setLastTranscript(text);
-            onTranscript(text);
-          }
-        } catch (e) {
-          console.warn('[WakeWord] Transcription failed:', e);
-        } finally {
-          setWakeState('listening');
+      try {
+        const base64 = await blobToBase64(blob);
+        const res = await fetch(`${API}/api/voice/transcribe`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ audio: base64, mimeType: 'audio/webm' }),
+        });
+        const data = await res.json() as { text?: string };
+        const text = data.text?.trim() ?? '';
+        if (text.length > 1) {
+          setLastTranscript(text);
+          onTranscript(text);
         }
-      };
-      reader.readAsDataURL(blob);
+      } catch (e) {
+        console.warn('[WakeWord] Transcription failed:', e);
+      } finally {
+        setWakeState('listening');
+      }
     };
 
     recorder.start(200);
 
     // Auto-stop after silence
-    silenceTimerRef.current = setTimeout(stopRecording, SILENCE_MS);
+    silenceTimerRef.current = setTimeout(() => stopRecording(recorder), SILENCE_MS);
   }, [onTranscript, setWakeState, stopRecording]);
 
   useEffect(() => {
-    if (!enabled) return;
-    if (typeof window === 'undefined') return;
+    if (!enabled || typeof window === 'undefined') return;
 
     const SpeechRecognition =
       window.SpeechRecognition ||
@@ -130,67 +113,58 @@ export function useWakeWord({ onTranscript, onStateChange, enabled = true }: Use
     }
 
     stoppedRef.current = false;
-    let stream: MediaStream | null = null;
+    let localStream: MediaStream | null = null;
 
     async function init() {
       try {
-        stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        _activeStream = localStream;
       } catch (e) {
-        console.error('[WakeWord] Microphone access denied:', e);
+        console.error('[WakeWord] Mic denied:', e);
         return;
       }
 
       const recognition = new SpeechRecognition();
       recognition.continuous = true;
-      recognition.interimResults = false; // FINAL results only — prevents multi-fire
+      recognition.interimResults = false; // final only
       recognition.lang = 'en-US';
-      recognition.maxAlternatives = 2;
-      recognitionRef.current = recognition;
+      recognition.maxAlternatives = 1;
 
       recognition.onstart = () => {
         if (!stoppedRef.current) setWakeState('listening');
       };
 
       recognition.onresult = (event) => {
-        // Only process new final results
         for (let i = event.resultIndex; i < event.results.length; i++) {
           const result = event.results[i];
-          if (!result?.isFinal) continue;  // skip interim (shouldn't arrive, but belt+suspenders)
+          // Only process final results
+          if (!result?.isFinal) continue;
 
-          const transcript = Array.from(result)
-            .map((r) => r.transcript)
-            .join(' ')
-            .toLowerCase()
-            .trim();
+          const transcript = result[0]?.transcript.toLowerCase().trim() ?? '';
+          if (!transcript) continue;
 
-          // Already in cooldown or recording — ignore
-          if (recordingRef.current) continue;
-          if (Date.now() - lastTriggerRef.current < COOLDOWN_MS) continue;
+          // Gate: don't trigger if in cooldown or recording
+          if (!canTrigger()) continue;
 
           const wakeFound = WAKE_WORDS.find((w) => transcript.includes(w));
           if (!wakeFound) continue;
 
-          // Strip wake word to get the command portion
           const afterWake = transcript.split(wakeFound).pop()?.trim() ?? '';
-          console.log(`[WakeWord] ▶ "${wakeFound}" detected — command: "${afterWake || '(listening…)'}"`);
+          console.log(`[WakeWord] ▶ wake="${wakeFound}" command="${afterWake || '(listening)'}"`);
 
-          startRecording(stream!, afterWake);
-          break; // only trigger once per result batch
+          triggerCommand(localStream!, afterWake);
+          break; // one trigger per result batch, always
         }
       };
 
       recognition.onerror = (e) => {
         const silent = ['no-speech', 'aborted', 'network', 'audio-capture'];
-        if (!silent.includes(e.error)) {
-          console.warn('[WakeWord] Error (will retry):', e.error);
-        }
+        if (!silent.includes(e.error)) console.warn('[WakeWord] error:', e.error);
       };
 
       recognition.onend = () => {
         if (!stoppedRef.current) {
-          setTimeout(() => {
-            try { recognition.start(); } catch { /* already running */ }
-          }, 500);
+          setTimeout(() => { try { recognition.start(); } catch { /* ignore */ } }, 600);
         }
       };
 
@@ -201,18 +175,28 @@ export function useWakeWord({ onTranscript, onStateChange, enabled = true }: Use
 
     return () => {
       stoppedRef.current = true;
-      recordingRef.current = false;
+      _isRecording = false;
       clearSilenceTimer();
-      try { recognitionRef.current?.stop(); } catch { /* ignore */ }
-      stream?.getTracks().forEach((t) => t.stop());
+      localStream?.getTracks().forEach((t) => t.stop());
+      if (_activeStream === localStream) _activeStream = null;
     };
-  }, [enabled, startRecording, setWakeState]);
+  }, [enabled, triggerCommand, setWakeState]);
 
   return { state, lastTranscript };
 }
 
+function blobToBase64(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      const result = reader.result as string;
+      resolve(result.split(',')[1] ?? '');
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+}
+
 declare global {
-  interface Window {
-    SpeechRecognition: typeof SpeechRecognition;
-  }
+  interface Window { SpeechRecognition: typeof SpeechRecognition; }
 }
