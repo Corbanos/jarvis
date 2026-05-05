@@ -70,7 +70,7 @@ const DEFAULTS: { modules: ModuleInstance[]; topZ: number } = {
     {
       id: 'chat-default',
       type: 'chat',
-      x: typeof window !== 'undefined' ? window.innerWidth - 480 : 1400,
+      x: 1400,
       y: 80,
       ...DEFAULT_SIZES.chat,
       zIndex: 10,
