@@ -291,6 +291,14 @@ export function useWakeWord({ onTranscript, onStateChange, enabled = true }: Use
     }
 
     async function init() {
+      // Browsers only expose mediaDevices in secure contexts (https or
+      // localhost/127.0.0.1). On plain HTTP from another origin (LAN IP,
+      // hostname, etc.) it's undefined — fall through quietly.
+      if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
+        console.warn('[WakeWord] Mic API unavailable. Use https:// or localhost (this origin: ' +
+          (typeof window !== 'undefined' ? window.location.origin : 'unknown') + ')');
+        return;
+      }
       try {
         stream = await navigator.mediaDevices.getUserMedia({ audio: true });
         startAudioLevels(stream).catch(() => {});
