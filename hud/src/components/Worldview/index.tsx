@@ -61,11 +61,21 @@ export function useWorldviewWS() {
       const cmd = (e as CustomEvent).detail as WorldviewCommand;
       if (!cmd) return;
       const ws = useWorkspace.getState();
-      if (cmd.action === 'open' || cmd.action === 'focus') {
-        const existing = ws.modules.find((m) => m.type === 'worldview');
-        if (!existing) summon('worldview');
-      } else if (cmd.action === 'close') {
+      // Any command that has visible effect needs the module mounted.
+      // Only 'close' should NOT auto-summon.
+      if (cmd.action === 'close') {
         ws.closeByType('worldview');
+        return;
+      }
+      const existing = ws.modules.find((m) => m.type === 'worldview');
+      if (!existing) {
+        summon('worldview');
+        // Replay this command on next tick so the freshly-mounted
+        // WorldviewModule listener catches it. A second event with the
+        // same detail is fine — handlers are idempotent.
+        setTimeout(() => {
+          window.dispatchEvent(new CustomEvent(WV_EVENT, { detail: cmd }));
+        }, 350);
       }
     }
     window.addEventListener(WV_EVENT, onCmd);

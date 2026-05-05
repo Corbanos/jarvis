@@ -131,9 +131,15 @@
   }
 
   // ─── Inbound messages ────────────────────────────────────────────────────
-  window.addEventListener('message', function (e) {
-    const data = e.data;
-    if (!data || typeof data !== 'object') return;
+  // Queue messages that arrive before Cesium is ready, then flush once viewer exists.
+  const earlyQueue = [];
+  let cesiumReady = false;
+
+  function isReady() {
+    return cesiumReady || (typeof viewer !== 'undefined' && viewer && viewer.scene);
+  }
+
+  function processMsg(data) {
     switch (data.type) {
       case 'worldview:focus':
         if (typeof data.lat === 'number' && typeof data.lon === 'number') {
@@ -171,15 +177,31 @@
         post(snapshotState());
         break;
     }
+  }
+
+  function flushQueue() {
+    while (earlyQueue.length) processMsg(earlyQueue.shift());
+  }
+
+  window.addEventListener('message', function (e) {
+    const data = e.data;
+    if (!data || typeof data !== 'object') return;
+    if (!isReady()) {
+      earlyQueue.push(data);
+      return;
+    }
+    processMsg(data);
   });
 
   // Announce ready when Cesium boot completes
   function announceReady() {
     if (typeof viewer !== 'undefined' && viewer) {
+      cesiumReady = true;
+      flushQueue();
       post({ type: 'worldview:ready' });
       post(snapshotState());
     } else {
-      setTimeout(announceReady, 500);
+      setTimeout(announceReady, 300);
     }
   }
   announceReady();

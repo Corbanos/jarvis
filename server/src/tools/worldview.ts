@@ -62,26 +62,29 @@ async function ipLocate(): Promise<{ lat: number; lon: number; name: string }> {
   return { lat: 43.6532, lon: -79.3832, name: 'Toronto, ON' };
 }
 
-async function nearbySearch(lat: number, lon: number, query: string, radiusM: number, limit: number): Promise<Array<Pin & { dist: number }>> {
-  const escaped = query.replace(/[^\w\s\-/&']/g, '').replace(/"/g, '\\"');
-  const overpass = `[out:json][timeout:15];
-(
-  node["name"~"${escaped}",i](around:${radiusM},${lat},${lon});
-  node["brand"~"${escaped}",i](around:${radiusM},${lat},${lon});
-  node["amenity"~"${escaped}",i](around:${radiusM},${lat},${lon});
-  node["shop"~"${escaped}",i](around:${radiusM},${lat},${lon});
-);
-out center ${limit * 2};`;
+// Run one Overpass query, parse, return ranked pins. Each query targets
+// exactly ONE tag — keeps Overpass under its query budget.
+async function runOverpass(query: string, lat: number, lon: number, radiusM: number, limit: number): Promise<Array<Pin & { dist: number }>> {
   try {
     const r = await fetch('https://overpass-api.de/api/interpreter', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: 'data=' + encodeURIComponent(overpass),
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'Accept': 'application/json',
+        'User-Agent': 'jarvis-hud/1.0 (+overpass)',
+      },
+      body: 'data=' + encodeURIComponent(query),
       signal: AbortSignal.timeout(20000),
     });
     if (!r.ok) return [];
-    const j = await r.json() as { elements: Array<{ lat: number; lon: number; tags?: Record<string, string> }> };
-    const ranked = (j.elements || []).map((el) => {
+    const text = await r.text();
+    if (text.includes('Query timed out')) return [];
+    const j = JSON.parse(text) as { elements: Array<{ type: string; lat?: number; lon?: number; center?: { lat: number; lon: number }; tags?: Record<string, string> }> };
+    const out: Array<Pin & { dist: number }> = [];
+    for (const el of (j.elements || [])) {
+      const eLat = el.lat ?? el.center?.lat;
+      const eLon = el.lon ?? el.center?.lon;
+      if (typeof eLat !== 'number' || typeof eLon !== 'number') continue;
       const tags = el.tags || {};
       const name = tags['name'] || tags['brand'] || tags['amenity'] || tags['shop'] || 'Unnamed';
       const sub = [
@@ -90,14 +93,78 @@ out center ${limit * 2};`;
           : tags['addr:street'] || '',
         tags['addr:city'] || '',
       ].filter(Boolean).join(', ') || tags['opening_hours'] || '';
-      return {
-        lat: el.lat, lon: el.lon, label: name, sub,
+      out.push({
+        lat: eLat, lon: eLon, label: name, sub,
         tag: 'amber' as const,
-        dist: haversine({ lat, lon }, el),
-      };
-    }).sort((a, b) => a.dist - b.dist).slice(0, limit);
-    return ranked;
+        dist: haversine({ lat, lon }, { lat: eLat, lon: eLon }),
+      });
+    }
+    return out.sort((a, b) => a.dist - b.dist).slice(0, limit);
   } catch { return []; }
+}
+
+// Common amenity-like terms (the user's query, lowercased) → OSM amenity tag.
+const AMENITY_MAP: Record<string, string> = {
+  'restaurant': 'restaurant', 'restaurants': 'restaurant',
+  'cafe': 'cafe', 'coffee': 'cafe', 'coffee shop': 'cafe',
+  'bar': 'bar', 'pub': 'pub',
+  'gas': 'fuel', 'gas station': 'fuel', 'fuel': 'fuel', 'petrol': 'fuel',
+  'pharmacy': 'pharmacy', 'drugstore': 'pharmacy',
+  'hospital': 'hospital', 'clinic': 'clinic', 'doctor': 'doctors',
+  'bank': 'bank', 'atm': 'atm',
+  'parking': 'parking', 'park': 'parking',
+  'school': 'school', 'university': 'university',
+  'library': 'library',
+  'police': 'police', 'fire station': 'fire_station',
+  'post office': 'post_office',
+  'hotel': 'hotel',
+};
+const SHOP_MAP: Record<string, string> = {
+  'grocery': 'supermarket', 'groceries': 'supermarket', 'supermarket': 'supermarket',
+  'convenience': 'convenience', 'convenience store': 'convenience',
+  'bakery': 'bakery', 'butcher': 'butcher',
+};
+
+async function nearbySearch(lat: number, lon: number, query: string, radiusM: number, limit: number): Promise<Array<Pin & { dist: number }>> {
+  const q = query.trim();
+  const qLower = q.toLowerCase();
+  const escaped = q.replace(/[^\w\s\-/&']/g, '').replace(/"/g, '\\"');
+
+  // Build a list of single-tag queries, ordered by likelihood. Each is fast
+  // because it hits a single tag with one regex.
+  const tries: string[] = [];
+
+  // 1) brand match (fastest for chains: 7-Eleven, Starbucks, McDonald's, etc.)
+  tries.push(`[out:json][timeout:10];(node["brand"~"${escaped}",i](around:${radiusM},${lat},${lon});way["brand"~"${escaped}",i](around:${radiusM},${lat},${lon}););out center ${limit * 3};`);
+  // 2) name match
+  tries.push(`[out:json][timeout:10];(node["name"~"${escaped}",i](around:${radiusM},${lat},${lon});way["name"~"${escaped}",i](around:${radiusM},${lat},${lon}););out center ${limit * 3};`);
+  // 3) amenity / shop semantic match (when query is a category like "coffee", "gas station")
+  if (AMENITY_MAP[qLower]) {
+    const a = AMENITY_MAP[qLower];
+    tries.push(`[out:json][timeout:10];(node["amenity"="${a}"](around:${radiusM},${lat},${lon});way["amenity"="${a}"](around:${radiusM},${lat},${lon}););out center ${limit * 3};`);
+  }
+  if (SHOP_MAP[qLower]) {
+    const sh = SHOP_MAP[qLower];
+    tries.push(`[out:json][timeout:10];(node["shop"="${sh}"](around:${radiusM},${lat},${lon});way["shop"="${sh}"](around:${radiusM},${lat},${lon}););out center ${limit * 3};`);
+  }
+  // 4) generic shop/amenity regex (catch-all)
+  tries.push(`[out:json][timeout:10];(node["amenity"~"${escaped}",i](around:${radiusM},${lat},${lon});node["shop"~"${escaped}",i](around:${radiusM},${lat},${lon}););out center ${limit * 3};`);
+
+  // Aggregate across tries; first one with results wins, but also merge if
+  // brand + name both produce hits (different chain locations).
+  const seen = new Set<string>();
+  const all: Array<Pin & { dist: number }> = [];
+  for (const overpass of tries) {
+    const got = await runOverpass(overpass, lat, lon, radiusM, limit * 2);
+    for (const p of got) {
+      const key = `${p.lat.toFixed(5)},${p.lon.toFixed(5)}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      all.push(p);
+    }
+    if (all.length >= limit) break;
+  }
+  return all.sort((a, b) => a.dist - b.dist).slice(0, limit);
 }
 
 function haversine(a: { lat: number; lon: number }, b: { lat: number; lon: number }): number {
