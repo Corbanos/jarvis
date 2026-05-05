@@ -2,6 +2,7 @@
 import { useEffect, useRef } from 'react';
 import { useJarvisStore } from '@/lib/store';
 import { emitWorldviewEvent } from '@/components/Worldview';
+import { useWorkspace, summon, type ModuleType } from '@/lib/workspace';
 
 const WS_URL = process.env['NEXT_PUBLIC_JARVIS_WS'] ?? 'ws://localhost:7777/ws';
 const MAX_RECONNECT_DELAY = 16000;
@@ -100,6 +101,19 @@ export function useJarvisWS() {
             case 'worldview':
               emitWorldviewEvent(event.payload as { action: string; lat?: number; lon?: number; name?: string });
               break;
+            case 'module': {
+              const action = event.payload.action as string;
+              const type = event.payload.type as ModuleType;
+              const ws = useWorkspace.getState();
+              if (action === 'open') summon(type);
+              else if (action === 'close') ws.closeByType(type);
+              else if (action === 'focus') {
+                const inst = ws.modules.find((m) => m.type === type);
+                if (inst) ws.focus(inst.id);
+                else summon(type);
+              }
+              break;
+            }
             case 'card': {
               const ct = event.payload.cardType as string;
               const data = event.payload.data as Record<string, unknown>;
