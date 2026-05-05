@@ -13,6 +13,7 @@ export interface VoiceConfig {
   ttsSpeed: number;              // 0.75 - 1.5
   ttsEnabled: boolean;
   fuzzyMatch: boolean;           // allow loose substring matching
+  micMuted: boolean;             // disable wake word capture entirely
 
   setWakePhrases: (phrases: string[]) => void;
   setSleepPhrases: (phrases: string[]) => void;
@@ -21,6 +22,7 @@ export interface VoiceConfig {
   setTtsSpeed: (n: number) => void;
   setTtsEnabled: (v: boolean) => void;
   setFuzzyMatch: (v: boolean) => void;
+  setMicMuted: (v: boolean) => void;
   resetDefaults: () => void;
 }
 
@@ -32,6 +34,7 @@ const DEFAULTS = {
   ttsSpeed: 1.15,
   ttsEnabled: true,
   fuzzyMatch: true,
+  micMuted: false,
 };
 
 export const useVoiceConfig = create<VoiceConfig>()(
@@ -45,6 +48,7 @@ export const useVoiceConfig = create<VoiceConfig>()(
       setTtsSpeed: (ttsSpeed) => set({ ttsSpeed }),
       setTtsEnabled: (ttsEnabled) => set({ ttsEnabled }),
       setFuzzyMatch: (fuzzyMatch) => set({ fuzzyMatch }),
+      setMicMuted: (micMuted) => set({ micMuted }),
       resetDefaults: () => set(DEFAULTS),
     }),
     { name: 'jarvis-voice-config' }

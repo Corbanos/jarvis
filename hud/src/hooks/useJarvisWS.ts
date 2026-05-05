@@ -1,6 +1,7 @@
 'use client';
 import { useEffect, useRef } from 'react';
 import { useJarvisStore } from '@/lib/store';
+import { emitWorldviewEvent } from '@/components/Worldview';
 
 const WS_URL = process.env['NEXT_PUBLIC_JARVIS_WS'] ?? 'ws://localhost:7777/ws';
 const MAX_RECONNECT_DELAY = 16000;
@@ -11,6 +12,7 @@ export function useJarvisWS() {
 
   const addThinkingToken = useJarvisStore((s) => s.addThinkingToken);
   const addToolCall = useJarvisStore((s) => s.addToolCall);
+  const markToolDone = useJarvisStore((s) => s.markToolDone);
   const addMessage = useJarvisStore((s) => s.addMessage);
   const setConnected = useJarvisStore((s) => s.setConnected);
   const addAgent = useJarvisStore((s) => s.addAgent);
@@ -19,6 +21,7 @@ export function useJarvisWS() {
   const setAgentTool = useJarvisStore((s) => s.setAgentTool);
   const agentLog = useJarvisStore((s) => s.agentLog);
   const completeAgent = useJarvisStore((s) => s.completeAgent);
+  const triggerDismiss = useJarvisStore((s) => s.triggerDismiss);
   const addTelemetry = useJarvisStore((s) => s.addTelemetry);
 
   useEffect(() => {
@@ -43,6 +46,9 @@ export function useJarvisWS() {
               break;
             case 'tool_call':
               addToolCall({ name: event.payload.name as string, status: event.payload.status as string, input: event.payload.input as Record<string, unknown>, timestamp: event.timestamp });
+              break;
+            case 'tool_result':
+              markToolDone(event.payload.name as string);
               break;
             case 'message':
               addMessage({ id: event.payload.id as string, role: 'assistant', text: event.payload.text as string, timestamp: event.timestamp });
@@ -88,6 +94,12 @@ export function useJarvisWS() {
                 timestamp: event.timestamp,
               });
               break;
+            case 'dismiss':
+              triggerDismiss();
+              break;
+            case 'worldview':
+              emitWorldviewEvent(event.payload as { action: string; lat?: number; lon?: number; name?: string });
+              break;
             case 'telemetry':
               addTelemetry({ source: event.payload.source as string, event: event.payload.event as string, data: event.payload.data as Record<string, unknown>, timestamp: event.timestamp });
               break;
@@ -111,7 +123,7 @@ export function useJarvisWS() {
       cancelled = true;
       ws.current?.close();
     };
-  }, [addThinkingToken, addToolCall, addMessage, setConnected, addAgent, updateAgent, appendAgentToken, setAgentTool, agentLog, completeAgent, addTelemetry]);
+  }, [addThinkingToken, addToolCall, markToolDone, addMessage, setConnected, addAgent, updateAgent, appendAgentToken, setAgentTool, agentLog, completeAgent, triggerDismiss, addTelemetry]);
 }
 
 function truncate(s: string, n: number): string {

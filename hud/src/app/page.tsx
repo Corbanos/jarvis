@@ -14,6 +14,8 @@ import { ArcReactor } from '@/components/ArcReactor';
 import { RingGauge } from '@/components/RingGauge';
 import { SchedulerPanel } from '@/components/SchedulerPanel';
 import { SetupScreen } from '@/components/SetupScreen';
+import { Worldview } from '@/components/Worldview';
+import { SystemTelemetry } from '@/components/SystemTelemetry';
 
 const API = process.env['NEXT_PUBLIC_JARVIS_API'] ?? 'http://localhost:7777';
 type RightTab = 'agents' | 'scheduler' | 'telemetry';
@@ -94,6 +96,7 @@ function Dashboard() {
 
   return (
     <div style={{ height: '100vh', width: '100vw', display: 'flex', flexDirection: 'column', background: '#000', overflow: 'hidden', position: 'relative' }}>
+      <Worldview />
       <HexGrid />
       <div style={{ position: 'fixed', inset: 0, pointerEvents: 'none', zIndex: 1, background: 'radial-gradient(ellipse at center, transparent 25%, rgba(0,0,0,0.7) 100%)' }} />
       <div style={{ position: 'fixed', inset: 0, pointerEvents: 'none', zIndex: 1, backgroundImage: 'repeating-linear-gradient(0deg, rgba(0,229,255,0.012) 0px, transparent 1px, transparent 28px)' }} />
@@ -119,13 +122,8 @@ function Dashboard() {
               </div>
             </HUDPanel>
 
-            <HUDPanel title="POWER" accentColor="#ff8c00">
-              <div style={{ padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 8 }}>
-                <PowerLine label="ARC REACTOR" value={100} color="#00e5ff" />
-                <PowerLine label="REPULSORS" value={87} color="#00e5ff" />
-                <PowerLine label="SUIT POWER" value={94} color="#ff8c00" />
-                <PowerLine label="SHIELDS" value={71} color="#00ff9d" />
-              </div>
+            <HUDPanel title="SYSTEM TELEMETRY" accentColor="#00e5ff" statusDot="green">
+              <SystemTelemetry />
             </HUDPanel>
           </div>
 

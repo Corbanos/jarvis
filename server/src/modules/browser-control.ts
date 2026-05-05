@@ -1,7 +1,7 @@
 /**
  * Browser Control module
  * Jarvis controls its own Chromium browser instance via Playwright
- * Completely independent from your browser — Jarvis sees and acts in its own window
+ * Runs headless (background) so you can work while Jarvis browses
  */
 import { chromium, type Browser, type Page, type BrowserContext } from 'playwright';
 
@@ -23,14 +23,15 @@ export async function getBrowser(): Promise<{ browser: Browser; context: Browser
   _initializing = true;
   try {
     _browser = await chromium.launch({
-      headless: false, // Jarvis has a VISIBLE browser window
+      headless: true,
+      channel: undefined, // Use bundled Chromium, not system Chrome
       args: [
         '--no-sandbox',
-        '--start-maximized',
         '--disable-blink-features=AutomationControlled',
-        `--app-name=JARVIS Browser`,
+        '--disable-gpu',
+        '--hide-scrollbars',
+        '--mute-audio',
       ],
-      slowMo: 50, // Slight delay so actions are visible
     });
 
     _context = await _browser.newContext({
@@ -40,14 +41,6 @@ export async function getBrowser(): Promise<{ browser: Browser; context: Browser
 
     _page = await _context.newPage();
     await _page.goto('about:blank');
-
-    // Inject Jarvis watermark into every page
-    await _context.addInitScript(() => {
-      const el = document.createElement('div');
-      el.style.cssText = 'position:fixed;top:8px;right:8px;background:rgba(0,0,0,0.8);color:#00e5ff;font-family:monospace;font-size:10px;padding:4px 8px;border:1px solid #00e5ff33;border-radius:2px;z-index:99999;pointer-events:none;letter-spacing:0.1em;';
-      el.textContent = 'J.A.R.V.I.S. BROWSER';
-      document.addEventListener('DOMContentLoaded', () => document.body?.appendChild(el));
-    });
 
     _browser.on('disconnected', () => {
       _browser = null;

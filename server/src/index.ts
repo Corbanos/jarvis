@@ -12,6 +12,8 @@ import { computerTool } from './tools/computer.js';
 import { browserTool } from './tools/browser.js';
 import { scheduleTool } from './tools/schedule.js';
 import { weatherTool } from './tools/weather.js';
+import { dismissTool, setDismissHandler } from './tools/dismiss.js';
+import { worldviewTool, setWorldviewBroadcast } from './tools/worldview.js';
 import { chatRoutes } from './routes/chat.js';
 import { agentRoutes } from './routes/agents.js';
 import { telemetryRoutes } from './routes/telemetry.js';

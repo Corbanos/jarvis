@@ -40,14 +40,17 @@ interface JarvisState {
   toolCalls: ToolCallRecord[];
   agents: AgentRecord[];
   telemetry: TelemetryRecord[];
+  dismissNonce: number;
 
   setConnected: (v: boolean) => void;
+  triggerDismiss: () => void;
   setMessages: (m: ChatMessage[]) => void;
   addMessage: (m: ChatMessage) => void;
   clearMessages: () => void;
   addThinkingToken: (t: string) => void;
   clearThinking: () => void;
   addToolCall: (t: ToolCallRecord) => void;
+  markToolDone: (name: string) => void;
   addAgent: (a: AgentRecord) => void;
   updateAgent: (id: string, patch: Partial<AgentRecord> & { logs?: string[] }) => void;
   appendAgentToken: (id: string, token: string) => void;
@@ -64,8 +67,11 @@ export const useJarvisStore = create<JarvisState>((set) => ({
   toolCalls: [],
   agents: [],
   telemetry: [],
+  dismissNonce: 0,
 
   setConnected: (v) => set({ connected: v }),
+
+  triggerDismiss: () => set((s) => ({ dismissNonce: s.dismissNonce + 1 })),
 
   setMessages: (messages) => set({ messages, thinkingTokens: '' }),
 
@@ -82,6 +88,15 @@ export const useJarvisStore = create<JarvisState>((set) => ({
 
   addToolCall: (t) =>
     set((s) => ({ toolCalls: [...s.toolCalls.slice(-50), t] })),
+
+  markToolDone: (name) =>
+    set((s) => ({
+      toolCalls: s.toolCalls.map((t) =>
+        t.name === name && (t.status === 'executing' || t.status === 'starting')
+          ? { ...t, status: 'done' }
+          : t
+      ),
+    })),
 
   addAgent: (a) => set((s) => ({ agents: [...s.agents, a] })),
 

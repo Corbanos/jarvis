@@ -6,6 +6,7 @@ import { useWakeWord, type WakeState } from '@/hooks/useWakeWord';
 import { useJarvisTTS } from '@/hooks/useJarvisTTS';
 import { JarvisRichResponse } from '@/components/JarvisCards';
 import { SettingsButton } from '@/components/SettingsPanel';
+import { useVoiceConfig } from '@/lib/voice-config';
 
 export function JarvisChat() {
   const messages = useJarvisStore((s) => s.messages);
@@ -18,12 +19,19 @@ export function JarvisChat() {
 
   useJarvisTTS();
 
-  const { state: wakeState, lastTranscript } = useWakeWord({
+  const { state: wakeState, lastTranscript, goToSleep } = useWakeWord({
     onTranscript: (text) => {
       if (!loading) send(text);
     },
     enabled: true,
   });
+
+  // When AI calls the dismiss tool, server broadcasts a 'dismiss' event;
+  // store bumps dismissNonce; we react by going to sleep.
+  const dismissNonce = useJarvisStore((s) => s.dismissNonce);
+  useEffect(() => {
+    if (dismissNonce > 0) goToSleep('AI called dismiss tool');
+  }, [dismissNonce, goToSleep]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -245,6 +253,7 @@ function WakeStatusBar({ state, lastTranscript, loading }: { state: WakeState; l
           "{lastTranscript}"
         </span>
       )}
+      <MicToggle />
       <SettingsButton />
     </div>
   );
@@ -313,5 +322,31 @@ function ThinkingDots() {
         }} />
       ))}
     </div>
+  );
+}
+
+function MicToggle() {
+  const muted = useVoiceConfig((s) => s.micMuted);
+  const setMuted = useVoiceConfig((s) => s.setMicMuted);
+  return (
+    <button
+      onClick={() => setMuted(!muted)}
+      title={muted ? 'Unmute mic' : 'Mute mic'}
+      style={{
+        background: muted ? 'rgba(255,59,59,0.12)' : 'transparent',
+        border: `1px solid ${muted ? 'rgba(255,59,59,0.5)' : 'rgba(0,229,255,0.25)'}`,
+        borderRadius: 3,
+        color: muted ? 'var(--accent-red)' : 'var(--accent-primary)',
+        padding: '4px 9px',
+        fontSize: 9,
+        letterSpacing: '0.2em',
+        cursor: 'pointer',
+        fontFamily: 'inherit',
+        fontWeight: 700,
+        transition: 'all 0.2s',
+      }}
+    >
+      {muted ? '🔇 MUTED' : '🎤 LIVE'}
+    </button>
   );
 }

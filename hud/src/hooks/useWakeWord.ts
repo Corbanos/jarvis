@@ -7,14 +7,22 @@ const API = process.env['NEXT_PUBLIC_JARVIS_API'] ?? 'http://localhost:7777';
 
 // Chunk lengths
 const ASLEEP_CHUNK_MS = 2500;     // listen for wake word in 2.5s chunks
-const COMMAND_CHUNK_MS = 6000;    // capture full command after wake (max length)
-const COMMAND_SILENCE_MS = 1500;  // OR stop early after this silence
+const COMMAND_CHUNK_MS = 20000;   // generous max — we mainly stop on silence
+const COMMAND_SILENCE_MS = 2200;  // OR stop early after this silence
 
 // Voice activity threshold
 const VAD_THRESHOLD = 0.05;       // mic peak below this = silence
-const VAD_GRACE_MS = 800;         // require this much continuous silence to stop
+const VAD_GRACE_MS = 2200;        // require this much continuous silence to stop (mid-sentence pauses ok)
 
 const COOLDOWN_MS = 800;          // brief gap between captures
+
+// Patterns to filter out non-speech transcriptions from Whisper
+const BLANK_PATTERNS = [
+  /^\[.*\]$/,             // [blank_audio], [silence], [music], etc.
+  /^\(.*\)$/,             // (silence), (inaudible), etc.
+  /^\.+$/,                // just dots
+  /^\s*$/,                // empty or whitespace
+];
 
 export type WakeState = 'asleep' | 'awake' | 'recording' | 'processing';
 
@@ -29,20 +37,28 @@ interface UseWakeWordOptions {
   enabled?: boolean;
 }
 
+/**
+ * Check if transcription is meaningless (blank audio, silence markers, etc.)
+ */
+function isBlankTranscript(text: string): boolean {
+  if (!text || text.length < 2) return true;
+  return BLANK_PATTERNS.some((pattern) => pattern.test(text));
+}
+
 export function useWakeWord({ onTranscript, onStateChange, enabled = true }: UseWakeWordOptions) {
   const [state, setState] = useState<WakeState>('asleep');
   const [lastTranscript, setLastTranscript] = useState('');
 
   const wakePhrases = useVoiceConfig((s) => s.wakePhrases);
-  const sleepPhrases = useVoiceConfig((s) => s.sleepPhrases);
   const conversationMode = useVoiceConfig((s) => s.conversationMode);
   const awakeTimeoutSec = useVoiceConfig((s) => s.awakeTimeoutSec);
   const fuzzyMatch = useVoiceConfig((s) => s.fuzzyMatch);
+  const micMuted = useVoiceConfig((s) => s.micMuted);
 
-  const cfgRef = useRef({ wakePhrases, sleepPhrases, conversationMode, awakeTimeoutSec, fuzzyMatch });
+  const cfgRef = useRef({ wakePhrases, conversationMode, awakeTimeoutSec, fuzzyMatch, micMuted });
   useEffect(() => {
-    cfgRef.current = { wakePhrases, sleepPhrases, conversationMode, awakeTimeoutSec, fuzzyMatch };
-  }, [wakePhrases, sleepPhrases, conversationMode, awakeTimeoutSec, fuzzyMatch]);
+    cfgRef.current = { wakePhrases, conversationMode, awakeTimeoutSec, fuzzyMatch, micMuted };
+  }, [wakePhrases, conversationMode, awakeTimeoutSec, fuzzyMatch, micMuted]);
 
   const onTranscriptRef = useRef(onTranscript);
   useEffect(() => { onTranscriptRef.current = onTranscript; }, [onTranscript]);
@@ -176,6 +192,17 @@ export function useWakeWord({ onTranscript, onStateChange, enabled = true }: Use
       while (!stoppedRef.current) {
         const cfg = cfgRef.current;
 
+        // Mic muted — sleep + skip
+        if (cfg.micMuted) {
+          if (_isAwake) {
+            console.log('[WakeWord] Mic muted while awake — going to sleep');
+            _isAwake = false;
+            setWakeState('asleep');
+          }
+          await sleep(300);
+          continue;
+        }
+
         // Wait for cooldown
         const wait = COOLDOWN_MS - (Date.now() - _lastTriggerAt);
         if (wait > 0) await sleep(wait);
@@ -212,29 +239,24 @@ export function useWakeWord({ onTranscript, onStateChange, enabled = true }: Use
 
         if (stoppedRef.current) { _busy = false; break; }
 
-        if (text) {
-          console.log(`[WakeWord] [Whisper] "${text}"  (${_isAwake ? 'AWAKE' : 'ASLEEP'})`);
-          setLastTranscript(text);
-        }
-
-        if (!text || text.length < 2) {
+        // Filter out blank/non-speech transcriptions
+        if (isBlankTranscript(text)) {
+          console.log(`[WakeWord] (filtered blank transcript: "${text}")`);
           _busy = false;
           setWakeState(_isAwake ? 'awake' : 'asleep');
           continue;
         }
 
+        console.log(`[WakeWord] [Whisper] "${text}"  (${_isAwake ? 'AWAKE' : 'ASLEEP'})`);
+        setLastTranscript(text);
+
         _lastTriggerAt = Date.now();
 
         if (_isAwake) {
-          // In conversation mode — every meaningful utterance goes to Jarvis
-          const sleepHit = matchPhrase(text, cfg.sleepPhrases, cfg.fuzzyMatch);
+          // Conversation mode — every utterance goes to Jarvis.
+          // Dismissal is decided by the AI via the 'dismiss' tool, not hardcoded phrases.
           armSleepTimer();
           onTranscriptRef.current(text);
-          if (sleepHit) {
-            console.log(`[WakeWord] ▶ Sleep phrase "${sleepHit}" — going to sleep after reply`);
-            // Schedule sleep after Jarvis has time to reply
-            setTimeout(() => goToSleep(`heard "${sleepHit}"`), 4000);
-          }
           _busy = false;
           setWakeState('awake');
           continue;
@@ -295,7 +317,7 @@ export function useWakeWord({ onTranscript, onStateChange, enabled = true }: Use
     };
   }, [enabled, setWakeState, wakeUp, armSleepTimer, goToSleep]);
 
-  return { state, lastTranscript, isAwake: state === 'awake' || state === 'recording' || state === 'processing' };
+  return { state, lastTranscript, isAwake: state === 'awake' || state === 'recording' || state === 'processing', goToSleep };
 }
 
 function sleep(ms: number) {
