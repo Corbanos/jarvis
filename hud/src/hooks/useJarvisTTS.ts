@@ -2,6 +2,7 @@
 import { useEffect, useRef } from 'react';
 import { useJarvisStore } from '@/lib/store';
 import { stripCards } from '@/components/JarvisCards/parser';
+import { attachTTSElement } from '@/lib/audio-level';
 
 const API = process.env['NEXT_PUBLIC_JARVIS_API'] ?? 'http://localhost:7777';
 
@@ -43,6 +44,10 @@ export function useJarvisTTS() {
         const audio = new Audio(url);
         audioRef.current = audio;
         audio.volume = 1.0;
+        audio.crossOrigin = 'anonymous';
+
+        // Hook into global audio level tracker so reactor reacts when Jarvis speaks
+        attachTTSElement(audio);
 
         audio.onended = () => URL.revokeObjectURL(url);
         audio.onerror = () => URL.revokeObjectURL(url);

@@ -1,5 +1,6 @@
 'use client';
 import { useEffect, useRef, useState, useCallback } from 'react';
+import { startAudioLevels } from '@/lib/audio-level';
 
 const WAKE_WORDS = ['hey jarvis', 'jarvis', 'okay jarvis'];
 const SILENCE_MS = 2200;
@@ -128,6 +129,8 @@ export function useWakeWord({ onTranscript, onStateChange, enabled = true }: Use
       try {
         localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
         _activeStream = localStream;
+        // Share this stream with the global audio level tracker
+        startAudioLevels(localStream).catch(() => { /* ignore */ });
       } catch (e) {
         console.error('[WakeWord] Mic denied:', e);
         return;
