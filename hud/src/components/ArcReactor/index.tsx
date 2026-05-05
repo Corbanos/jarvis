@@ -210,21 +210,6 @@ export function ArcReactor({ size = 300 }: ArcReactorProps) {
   return (
     <div style={{ position: 'relative', width: size, height: size, flexShrink: 0 }}>
       <canvas ref={canvasRef} style={{ width: size, height: size, display: 'block' }} />
-      {/* JARVIS label below */}
-      <div style={{
-        position: 'absolute',
-        bottom: -6, left: '50%', transform: 'translateX(-50%)',
-        fontSize: Math.max(9, size * 0.045),
-        letterSpacing: '0.45em',
-        color: 'var(--accent-bright)',
-        whiteSpace: 'nowrap',
-        textShadow: '0 0 16px rgba(0,229,255,0.6)',
-        fontWeight: 700,
-      }}
-        className="text-flicker"
-      >
-        J.A.R.V.I.S.
-      </div>
     </div>
   );
 }
