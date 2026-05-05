@@ -1,21 +1,27 @@
 'use client';
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { startAudioLevels } from '@/lib/audio-level';
+import { startAudioLevels, useAudioLevel } from '@/lib/audio-level';
 import { useVoiceConfig, matchPhrase } from '@/lib/voice-config';
 
-const SILENCE_MS = 2000;        // stop recording after this much silence
-const COOLDOWN_MS = 1500;       // brief gap between recordings
 const API = process.env['NEXT_PUBLIC_JARVIS_API'] ?? 'http://localhost:7777';
+
+// Chunk lengths
+const ASLEEP_CHUNK_MS = 2500;     // listen for wake word in 2.5s chunks
+const COMMAND_CHUNK_MS = 6000;    // capture full command after wake (max length)
+const COMMAND_SILENCE_MS = 1500;  // OR stop early after this silence
+
+// Voice activity threshold
+const VAD_THRESHOLD = 0.05;       // mic peak below this = silence
+const VAD_GRACE_MS = 800;         // require this much continuous silence to stop
+
+const COOLDOWN_MS = 800;          // brief gap between captures
 
 export type WakeState = 'asleep' | 'awake' | 'recording' | 'processing';
 
-// ── Module-level locks (survive React re-mounts / StrictMode) ──
-let _isRecording = false;
-let _lastTriggerAt = 0;
+// Module-level locks
 let _isAwake = false;
-let _awakeSince = 0;
-let _lastProcessedTranscript = '';
-let _lastProcessedAt = 0;
+let _busy = false; // currently recording or transcribing
+let _lastTriggerAt = 0;
 
 interface UseWakeWordOptions {
   onTranscript: (text: string) => void;
@@ -33,7 +39,6 @@ export function useWakeWord({ onTranscript, onStateChange, enabled = true }: Use
   const awakeTimeoutSec = useVoiceConfig((s) => s.awakeTimeoutSec);
   const fuzzyMatch = useVoiceConfig((s) => s.fuzzyMatch);
 
-  // Refs that the SR callback reads (to avoid re-binding handlers on config change)
   const cfgRef = useRef({ wakePhrases, sleepPhrases, conversationMode, awakeTimeoutSec, fuzzyMatch });
   useEffect(() => {
     cfgRef.current = { wakePhrases, sleepPhrases, conversationMode, awakeTimeoutSec, fuzzyMatch };
@@ -42,23 +47,20 @@ export function useWakeWord({ onTranscript, onStateChange, enabled = true }: Use
   const onTranscriptRef = useRef(onTranscript);
   useEffect(() => { onTranscriptRef.current = onTranscript; }, [onTranscript]);
 
-  const silenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const stoppedRef = useRef(false);
   const sleepTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const stoppedRef = useRef(false);
 
   const setWakeState = useCallback((s: WakeState) => {
     setState(s);
     onStateChange?.(s);
   }, [onStateChange]);
 
-  // Schedule auto-sleep after inactivity
   const armSleepTimer = useCallback(() => {
     if (sleepTimerRef.current) clearTimeout(sleepTimerRef.current);
     sleepTimerRef.current = setTimeout(() => {
       if (_isAwake) {
         console.log('[WakeWord] ⏾ Auto-sleep (inactivity)');
         _isAwake = false;
-        _awakeSince = 0;
         setWakeState('asleep');
       }
     }, cfgRef.current.awakeTimeoutSec * 1000);
@@ -68,7 +70,6 @@ export function useWakeWord({ onTranscript, onStateChange, enabled = true }: Use
     if (!_isAwake) return;
     console.log(`[WakeWord] ⏾ Sleep: ${reason}`);
     _isAwake = false;
-    _awakeSince = 0;
     if (sleepTimerRef.current) clearTimeout(sleepTimerRef.current);
     setWakeState('asleep');
   }, [setWakeState]);
@@ -77,228 +78,228 @@ export function useWakeWord({ onTranscript, onStateChange, enabled = true }: Use
     if (_isAwake) return;
     console.log(`[WakeWord] ☀ Awake: ${reason}`);
     _isAwake = true;
-    _awakeSince = Date.now();
     setWakeState('awake');
     armSleepTimer();
   }, [setWakeState, armSleepTimer]);
 
-  const triggerCommand = useCallback((stream: MediaStream, inlineCommand: string) => {
-    if (_isRecording) return;
-    if (Date.now() - _lastTriggerAt < COOLDOWN_MS) return;
+  useEffect(() => {
+    if (!enabled || typeof window === 'undefined') return;
 
-    _isRecording = true;
-    _lastTriggerAt = Date.now();
-    setWakeState('recording');
-    armSleepTimer();
+    stoppedRef.current = false;
+    _isAwake = false;
+    _busy = false;
+    _lastTriggerAt = 0;
 
-    const chunks: Blob[] = [];
-    const recorder = new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus' });
+    let stream: MediaStream | null = null;
+    let activeRecorder: MediaRecorder | null = null;
 
-    recorder.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data); };
+    /**
+     * Record a chunk of audio for `maxMs` (or until silence) and return it.
+     */
+    async function recordChunk(maxMs: number, allowEarlyStop: boolean): Promise<Blob | null> {
+      if (!stream) return null;
+      return new Promise((resolve) => {
+        const chunks: Blob[] = [];
+        const recorder = new MediaRecorder(stream!, { mimeType: 'audio/webm;codecs=opus' });
+        activeRecorder = recorder;
 
-    recorder.onerror = (e) => {
-      console.warn('[WakeWord] MediaRecorder error:', e);
-      _isRecording = false;
-      setWakeState(_isAwake ? 'awake' : 'asleep');
-    };
+        recorder.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data); };
 
-    recorder.onstop = async () => {
-      _isRecording = false;
-      setWakeState('processing');
+        let resolved = false;
+        const finish = () => {
+          if (resolved) return;
+          resolved = true;
+          if (silenceCheckId) clearInterval(silenceCheckId);
+          if (maxTimer) clearTimeout(maxTimer);
+          if (recorder.state === 'recording') {
+            try { recorder.stop(); } catch { /* ignore */ }
+          }
+          activeRecorder = null;
+        };
 
-      const finishAndReturn = (text: string) => {
-        if (text.length > 1) {
-          setLastTranscript(text);
-          onTranscriptRef.current(text);
+        recorder.onstop = () => {
+          const blob = new Blob(chunks, { type: 'audio/webm' });
+          resolve(blob.size > 500 ? blob : null);
+        };
 
-          // Check for sleep phrase BEFORE handing off
-          const sleepHit = matchPhrase(text, cfgRef.current.sleepPhrases, cfgRef.current.fuzzyMatch);
-          if (sleepHit) {
-            goToSleep(`heard sleep phrase "${sleepHit}"`);
+        recorder.start(200);
+
+        // Hard max
+        const maxTimer = setTimeout(finish, maxMs);
+
+        // Voice activity detection — stop early when silence sustained
+        let silentSince = 0;
+        let heardSpeech = false;
+        const silenceCheckId = allowEarlyStop ? setInterval(() => {
+          const lvl = useAudioLevel.getState().level;
+          if (lvl > VAD_THRESHOLD) {
+            heardSpeech = true;
+            silentSince = 0;
             return;
           }
-        }
-        if (_isAwake) {
-          armSleepTimer();
-          setWakeState('awake');
-        } else {
-          setWakeState('asleep');
-        }
-      };
+          if (!heardSpeech) return;
+          if (silentSince === 0) silentSince = Date.now();
+          else if (Date.now() - silentSince > VAD_GRACE_MS) {
+            console.log('[WakeWord] (silence detected — stopping early)');
+            finish();
+          }
+        }, 100) : null;
+      });
+    }
 
-      // Use SpeechRecognition's transcription if it captured the command inline
-      if (inlineCommand.trim().length > 2) {
-        finishAndReturn(inlineCommand.trim());
-        return;
-      }
-
-      // Otherwise use whisper for accuracy
-      const blob = new Blob(chunks, { type: 'audio/webm' });
-      if (blob.size < 500) {
-        if (_isAwake) setWakeState('awake'); else setWakeState('asleep');
-        return;
-      }
-
+    /**
+     * Send audio blob to whisper. Returns the transcribed text (lowercase, trimmed).
+     */
+    async function transcribe(blob: Blob): Promise<string> {
+      const base64 = await blobToBase64(blob);
       try {
-        const base64 = await blobToBase64(blob);
         const res = await fetch(`${API}/api/voice/transcribe`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ audio: base64, mimeType: 'audio/webm' }),
         });
+        if (!res.ok) return '';
         const data = await res.json() as { text?: string };
-        finishAndReturn((data.text ?? '').trim());
+        return (data.text ?? '').toLowerCase().trim();
       } catch (e) {
-        console.warn('[WakeWord] Transcription failed:', e);
-        finishAndReturn('');
+        console.warn('[WakeWord] transcribe error:', e);
+        return '';
       }
-    };
-
-    recorder.start(200);
-    silenceTimerRef.current = setTimeout(() => {
-      if (recorder.state === 'recording') recorder.stop();
-    }, SILENCE_MS);
-  }, [setWakeState, armSleepTimer, goToSleep]);
-
-  useEffect(() => {
-    if (!enabled || typeof window === 'undefined') return;
-
-    const SpeechRecognition =
-      window.SpeechRecognition ||
-      (window as unknown as { webkitSpeechRecognition?: typeof window.SpeechRecognition }).webkitSpeechRecognition;
-
-    if (!SpeechRecognition) {
-      console.warn('[WakeWord] SpeechRecognition not supported — use Chrome/Edge.');
-      return;
     }
 
-    stoppedRef.current = false;
-    _isRecording = false;
-    _lastTriggerAt = 0;
-    _isAwake = false;
+    /**
+     * Main capture loop.
+     * - When asleep: record short chunks, look for wake word
+     * - When awake: record longer chunks (with VAD), send all speech to Jarvis
+     */
+    async function captureLoop() {
+      while (!stoppedRef.current) {
+        const cfg = cfgRef.current;
 
-    let localStream: MediaStream | null = null;
+        // Wait for cooldown
+        const wait = COOLDOWN_MS - (Date.now() - _lastTriggerAt);
+        if (wait > 0) await sleep(wait);
+
+        // Skip if no actual speech detected (saves whisper calls)
+        const lvl = useAudioLevel.getState().level;
+        const isSpeaking = lvl > VAD_THRESHOLD;
+
+        if (!_isAwake) {
+          // ASLEEP: only listen if actively speaking — saves whisper calls
+          if (!isSpeaking) {
+            await sleep(150);
+            continue;
+          }
+        }
+        // AWAKE: always record, since Jarvis is in conversation mode
+
+        _busy = true;
+        setWakeState('recording');
+
+        const chunkMs = _isAwake ? COMMAND_CHUNK_MS : ASLEEP_CHUNK_MS;
+        const allowEarlyStop = _isAwake; // VAD only when awake (asleep chunks are short anyway)
+        const blob = await recordChunk(chunkMs, allowEarlyStop);
+
+        if (stoppedRef.current) { _busy = false; break; }
+        if (!blob) {
+          _busy = false;
+          setWakeState(_isAwake ? 'awake' : 'asleep');
+          continue;
+        }
+
+        setWakeState('processing');
+        const text = await transcribe(blob);
+
+        if (stoppedRef.current) { _busy = false; break; }
+
+        if (text) {
+          console.log(`[WakeWord] [Whisper] "${text}"  (${_isAwake ? 'AWAKE' : 'ASLEEP'})`);
+          setLastTranscript(text);
+        }
+
+        if (!text || text.length < 2) {
+          _busy = false;
+          setWakeState(_isAwake ? 'awake' : 'asleep');
+          continue;
+        }
+
+        _lastTriggerAt = Date.now();
+
+        if (_isAwake) {
+          // In conversation mode — every meaningful utterance goes to Jarvis
+          const sleepHit = matchPhrase(text, cfg.sleepPhrases, cfg.fuzzyMatch);
+          armSleepTimer();
+          onTranscriptRef.current(text);
+          if (sleepHit) {
+            console.log(`[WakeWord] ▶ Sleep phrase "${sleepHit}" — going to sleep after reply`);
+            // Schedule sleep after Jarvis has time to reply
+            setTimeout(() => goToSleep(`heard "${sleepHit}"`), 4000);
+          }
+          _busy = false;
+          setWakeState('awake');
+          continue;
+        }
+
+        // ASLEEP: only respond to wake word
+        const wakeHit = matchPhrase(text, cfg.wakePhrases, cfg.fuzzyMatch);
+        if (!wakeHit) {
+          console.log(`[WakeWord]   (no wake word match in: "${text}")`);
+          _busy = false;
+          setWakeState('asleep');
+          continue;
+        }
+
+        // Strip the wake phrase to extract the command portion
+        const afterWake = text.split(wakeHit).pop()?.trim() ?? '';
+        console.log(`[WakeWord] ▶ WAKE "${wakeHit}"  command="${afterWake || '(none — will record next utterance)'}"`);
+
+        if (cfg.conversationMode) wakeUp(`wake phrase "${wakeHit}"`);
+
+        if (afterWake.length > 1) {
+          // Command was in the same chunk — fire it now
+          onTranscriptRef.current(afterWake);
+          armSleepTimer();
+        }
+        // Otherwise: just wake up; loop will pick up the next utterance
+
+        _busy = false;
+        setWakeState(_isAwake ? 'awake' : 'asleep');
+      }
+    }
 
     async function init() {
       try {
-        localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        startAudioLevels(localStream).catch(() => {});
+        stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        startAudioLevels(stream).catch(() => {});
+        console.log('[WakeWord] ✓ Mic open — Whisper-based wake word loop starting');
       } catch (e) {
         console.error('[WakeWord] Mic denied:', e);
         return;
       }
 
-      const recognition = new SpeechRecognition!();
-      recognition.continuous = true;
-      recognition.interimResults = true; // both interim and final — needed for http://localhost
-      recognition.lang = 'en-US';
-      recognition.maxAlternatives = 1;
-
-      recognition.onstart = () => {
-        console.log('[WakeWord] ✓ Speech recognition ACTIVE');
-        if (!stoppedRef.current && !_isAwake) setWakeState('asleep');
-      };
-
-      recognition.onresult = (event: any) => {
-        for (let i = event.resultIndex; i < event.results.length; i++) {
-          const result = event.results[i];
-          if (!result) continue;
-
-          const transcript = result[0]?.transcript.toLowerCase().trim() ?? '';
-          if (!transcript || transcript.length < 2) continue;
-
-          const isFinal: boolean = result.isFinal;
-
-          // VERBOSE: log everything heard (interim included) so user sees SR is alive
-          if (isFinal) console.log(`[WakeWord] [SR] FINAL: "${transcript}"`);
-          else console.log(`[WakeWord] [SR] interim: "${transcript}"`);
-
-          // Dedup: skip same transcript processed in last 3 seconds
-          // (handles interim → final repeats AND interim flicker)
-          if (transcript === _lastProcessedTranscript && Date.now() - _lastProcessedAt < 3000) {
-            continue;
-          }
-
-          // For interim results, only act if we have a wake/sleep match
-          // (final results we always log + check)
-          const cfg = cfgRef.current;
-          const wakeHit = matchPhrase(transcript, cfg.wakePhrases, cfg.fuzzyMatch);
-          const sleepHit = matchPhrase(transcript, cfg.sleepPhrases, cfg.fuzzyMatch);
-
-          // For interim: only fire on a clear wake/sleep match (avoid mid-utterance noise)
-          // For final: always process (even bare conversation when awake)
-          if (!isFinal && !wakeHit && !sleepHit) continue;
-
-          _lastProcessedTranscript = transcript;
-          _lastProcessedAt = Date.now();
-
-          console.log(`[WakeWord] heard${isFinal ? '' : ' (interim)'}: "${transcript}"  (state=${_isAwake ? 'AWAKE' : 'ASLEEP'})`);
-
-          if (_isRecording) continue; // already capturing
-          if (Date.now() - _lastTriggerAt < COOLDOWN_MS) continue;
-
-          if (_isAwake) {
-            // Conversation mode — every utterance (final only) goes to Jarvis
-            if (!isFinal) continue; // never send interim mid-utterance
-            if (sleepHit) {
-              console.log(`[WakeWord] ▶ Sleep phrase "${sleepHit}" detected — sending then sleeping`);
-            }
-            triggerCommand(localStream!, transcript);
-            break;
-          }
-
-          // ASLEEP — only respond to wake phrase
-          if (!wakeHit) {
-            console.log('[WakeWord]   (asleep, no wake match)');
-            continue;
-          }
-
-          // Strip the wake phrase to extract the command
-          const afterWake = transcript.split(wakeHit).pop()?.trim() ?? '';
-          console.log(`[WakeWord] ▶ WAKE "${wakeHit}" + command="${afterWake || '(none)'}"`);
-
-          // Wake up
-          if (cfg.conversationMode) wakeUp(`wake phrase "${wakeHit}"`);
-
-          // If they said something after the wake word, send it now
-          if (afterWake.length > 1) {
-            triggerCommand(localStream!, afterWake);
-          } else {
-            // Just woke up — stay listening for next utterance without re-recording
-            setWakeState('awake');
-            armSleepTimer();
-          }
-          break;
-        }
-      };
-
-      recognition.onerror = (e: any) => {
-        const silent = ['no-speech', 'aborted', 'network', 'audio-capture'];
-        if (!silent.includes(e.error)) console.warn('[WakeWord] error:', e.error);
-      };
-
-      recognition.onend = () => {
-        if (!stoppedRef.current) {
-          setTimeout(() => { try { recognition.start(); } catch { /* ignore */ } }, 600);
-        }
-      };
-
-      recognition.start();
+      setWakeState('asleep');
+      captureLoop().catch((e) => console.error('[WakeWord] capture loop crashed:', e));
     }
 
     init();
 
     return () => {
       stoppedRef.current = true;
-      _isRecording = false;
       _isAwake = false;
-      if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+      _busy = false;
       if (sleepTimerRef.current) clearTimeout(sleepTimerRef.current);
-      localStream?.getTracks().forEach((t) => t.stop());
+      if (activeRecorder?.state === 'recording') {
+        try { activeRecorder.stop(); } catch { /* ignore */ }
+      }
+      stream?.getTracks().forEach((t) => t.stop());
     };
-  }, [enabled, triggerCommand, setWakeState, wakeUp, armSleepTimer]);
+  }, [enabled, setWakeState, wakeUp, armSleepTimer, goToSleep]);
 
   return { state, lastTranscript, isAwake: state === 'awake' || state === 'recording' || state === 'processing' };
+}
+
+function sleep(ms: number) {
+  return new Promise((r) => setTimeout(r, ms));
 }
 
 function blobToBase64(blob: Blob): Promise<string> {
@@ -311,13 +312,4 @@ function blobToBase64(blob: Blob): Promise<string> {
     reader.onerror = reject;
     reader.readAsDataURL(blob);
   });
-}
-
-// Browser SpeechRecognition has spotty TS lib coverage; cast loosely.
-/* eslint-disable @typescript-eslint/no-explicit-any */
-declare global {
-  interface Window {
-    SpeechRecognition?: any;
-    webkitSpeechRecognition?: any;
-  }
 }
