@@ -1,6 +1,7 @@
 'use client';
 import { useEffect, useState } from 'react';
 import { authFetch } from '@/lib/auth';
+import { useJarvisStore } from '@/lib/store';
 
 const API = process.env['NEXT_PUBLIC_JARVIS_API'] ?? 'http://localhost:7777';
 
@@ -23,6 +24,10 @@ export function SystemTelemetry() {
   const [voice, setVoice] = useState<VoiceStatus>({});
   const [latency, setLatency] = useState<number>(0);
 
+  const currentModel = useJarvisStore((s) => s.currentModel);
+  const availableModels = useJarvisStore((s) => s.availableModels);
+  const setCurrentModel = useJarvisStore((s) => s.setCurrentModel);
+
   useEffect(() => {
     const tick = async () => {
       const t0 = performance.now();
@@ -39,14 +44,28 @@ export function SystemTelemetry() {
       .then((d: VoiceStatus) => setVoice(d))
       .catch(() => { /* ignore */ });
 
+    authFetch(`${API}/api/model`)
+      .then((r) => r.json())
+      .then((d: { current: string }) => { if (d.current) setCurrentModel(d.current); })
+      .catch(() => { /* ignore */ });
+
     tick();
     const t = setInterval(tick, 4000);
     return () => clearInterval(t);
-  }, []);
+  }, [setCurrentModel]);
 
-  const uptimeStr = health.uptime
-    ? formatDuration(health.uptime)
-    : '—';
+  const uptimeStr = health.uptime ? formatDuration(health.uptime) : '—';
+
+  async function changeModel(m: string) {
+    try {
+      const res = await authFetch(`${API}/api/model`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: m }),
+      });
+      if (res.ok) setCurrentModel(m);
+    } catch { /* ignore */ }
+  }
 
   return (
     <div style={{ padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 6 }}>
@@ -54,12 +73,54 @@ export function SystemTelemetry() {
       <Stat label="UPTIME" value={uptimeStr} />
       <Stat label="ACTIVE AGENTS" value={String(health.agents ?? 0)} color={(health.agents ?? 0) > 0 ? 'var(--accent-amber)' : undefined} />
       <Stat label="WS CLIENTS" value={String(health.wsClients ?? 0)} />
+
       <Divider />
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+        <span style={{ fontSize: 9, color: 'var(--text-dim)', letterSpacing: '0.15em' }}>CLAUDE MODEL</span>
+        <select
+          value={currentModel}
+          onChange={(e) => changeModel(e.target.value)}
+          style={{
+            background: 'rgba(0,229,255,0.05)',
+            border: '1px solid rgba(0,229,255,0.3)',
+            borderRadius: 3,
+            color: 'var(--accent-primary)',
+            fontSize: 10,
+            padding: '5px 8px',
+            cursor: 'pointer',
+            fontFamily: 'inherit',
+            letterSpacing: '0.04em',
+            width: '100%',
+          }}
+        >
+          {availableModels.map((m) => (
+            <option key={m} value={m} style={{ background: '#0a1428', color: '#00e5ff' }}>
+              {prettyModel(m)}
+            </option>
+          ))}
+        </select>
+        <div style={{ fontSize: 8, color: 'var(--text-dim)', letterSpacing: '0.05em', marginTop: 2 }}>
+          Used by Jarvis + new agents.
+        </div>
+      </div>
+
+      <Divider />
+
       <Stat label="VTT (whisper)" value={voice.whisperAvailable ? 'READY' : 'OFFLINE'} color={voice.whisperAvailable ? 'var(--accent-green)' : 'var(--accent-red)'} />
       <Stat label="TTS engine" value={voice.method ?? '—'} color={voice.kokoroAvailable ? 'var(--accent-green)' : 'var(--accent-amber)'} />
       <Stat label="VOICE" value={voice.voice ?? '—'} />
     </div>
   );
+}
+
+function prettyModel(m: string): string {
+  if (m.includes('claude-sonnet-4')) return 'Sonnet 4';
+  if (m.includes('claude-3-5-sonnet')) return 'Sonnet 3.5';
+  if (m.includes('claude-3-opus')) return 'Opus';
+  if (m.includes('claude-3-5-haiku')) return 'Haiku 3.5';
+  if (m.includes('opus')) return 'Opus';
+  return m;
 }
 
 function Stat({ label, value, unit, color = 'var(--accent-bright)' }: { label: string; value: string; unit?: string; color?: string }) {

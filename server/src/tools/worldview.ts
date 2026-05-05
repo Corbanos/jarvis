@@ -1,4 +1,5 @@
 import type { ToolDefinition } from '../types/index.js';
+import { getFreshLocation } from '../core/operator-location.js';
 
 let _broadcast: ((event: string, payload: Record<string, unknown>) => void) | null = null;
 
@@ -305,7 +306,17 @@ that to write a short prose answer that REFERENCES the pins on screen
           if (!g) return `Could not geocode origin "${originStr}".`;
           origin = g;
         } else {
-          origin = await ipLocate();
+          // Prefer the operator's fresh browser geolocation (precise, ~few m).
+          const fresh = getFreshLocation();
+          if (fresh) {
+            origin = {
+              lat: fresh.lat,
+              lon: fresh.lon,
+              name: [fresh.city, fresh.region].filter(Boolean).join(', ') || `${fresh.lat.toFixed(4)}, ${fresh.lon.toFixed(4)}`,
+            };
+          } else {
+            origin = await ipLocate();
+          }
         }
         const radiusKm = Math.min(25, Math.max(0.5, (input['radiusKm'] as number | undefined) ?? 5));
         const limit = Math.min(25, Math.max(1, (input['limit'] as number | undefined) ?? 8));

@@ -1,4 +1,5 @@
 import type { ToolDefinition } from '../types/index.js';
+import { getFreshLocation } from '../core/operator-location.js';
 
 let _broadcastModule: ((event: string, payload: Record<string, unknown>) => void) | null = null;
 export function setWeatherBroadcast(fn: (event: string, payload: Record<string, unknown>) => void) {
@@ -43,6 +44,10 @@ It's currently 64 degrees and partly cloudy in San Francisco, sir. Pleasant even
         const r = geo.results[0];
         lat = r.latitude; lon = r.longitude;
         displayName = [r.name, r.admin1, r.country].filter(Boolean).join(', ');
+      } else if ((function() { const f = getFreshLocation(); return f && f.source === 'browser'; })()) {
+        const f = getFreshLocation()!;
+        lat = f.lat; lon = f.lon;
+        displayName = [f.city, f.region].filter(Boolean).join(', ') || `${f.lat.toFixed(4)}, ${f.lon.toFixed(4)}`;
       } else {
         // Auto-detect via IP — try multiple providers so a single rate-limit
         // doesn't kill the tool.
@@ -91,8 +96,8 @@ It's currently 64 degrees and partly cloudy in San Francisco, sir. Pleasant even
         latitude: String(lat), longitude: String(lon),
         current: 'temperature_2m,relative_humidity_2m,apparent_temperature,is_day,precipitation,weather_code,wind_speed_10m,wind_direction_10m',
         daily: 'weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max,sunrise,sunset',
-        temperature_unit: 'fahrenheit',
-        wind_speed_unit: 'mph',
+        temperature_unit: 'celsius',
+        wind_speed_unit: 'kmh',
         timezone: 'auto',
         forecast_days: '5',
       });
@@ -111,7 +116,7 @@ It's currently 64 degrees and partly cloudy in San Francisco, sir. Pleasant even
           humidity: w.current.relative_humidity_2m,
           condition: codeToCondition(w.current.weather_code),
           icon: codeToIcon(w.current.weather_code, w.current.is_day === 1),
-          wind_mph: Math.round(w.current.wind_speed_10m),
+          wind_kmh: Math.round(w.current.wind_speed_10m),
           wind_dir: degreesToCompass(w.current.wind_direction_10m),
           is_day: w.current.is_day === 1,
           precipitation: w.current.precipitation,

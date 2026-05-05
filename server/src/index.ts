@@ -26,6 +26,7 @@ import { voiceRoutes } from './routes/voice.js';
 import { jobRoutes } from './routes/jobs.js';
 import { setupRoutes, loadConfig, applyApiKey } from './routes/setup.js';
 import { authRoutes } from './routes/auth.js';
+import { locationRoutes } from './routes/location.js';
 import { registerAuth, getAccessToken } from './core/auth.js';
 import { initScheduler } from './modules/scheduler.js';
 import { checkAvailable as checkComputerUse } from './modules/computer-use.js';
@@ -130,6 +131,7 @@ async function main() {
   await app.register(jobRoutes);
   await app.register(cadRoutes);
   await app.register(shellRoutes);
+  await app.register(locationRoutes);
 
   app.get('/api/health', async () => ({
     status: 'OPERATIONAL', system: 'J.A.R.V.I.S.', version: '2.0.0',

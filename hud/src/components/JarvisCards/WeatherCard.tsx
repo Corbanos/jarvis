@@ -8,7 +8,7 @@ interface WeatherData {
     humidity: number;
     condition: string;
     icon: string;
-    wind_mph: number;
+    wind_kmh: number;
     wind_dir: string;
     is_day: boolean;
     precipitation: number;
@@ -90,7 +90,7 @@ export function WeatherCard({ data }: { data: WeatherData }) {
             {ICONS[data.current.icon] ?? '☁'}
           </div>
           <div style={{ fontSize: 32, fontWeight: 800, color: 'var(--accent-bright)', lineHeight: 1, letterSpacing: '0.02em', textShadow: '0 0 16px rgba(0,229,255,0.4)' }}>
-            {data.current.temp}°
+            {data.current.temp}°C
           </div>
           <div style={{ fontSize: 9, color: 'var(--text-secondary)', letterSpacing: '0.15em', marginTop: 2 }}>
             FEELS {data.current.feels_like}°
@@ -101,7 +101,7 @@ export function WeatherCard({ data }: { data: WeatherData }) {
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
           <Stat label="CONDITION" value={data.current.condition} />
           <Stat label="HUMIDITY" value={`${data.current.humidity}%`} />
-          <Stat label="WIND" value={`${data.current.wind_mph} ${data.current.wind_dir}`} unit="MPH" />
+          <Stat label="WIND" value={`${data.current.wind_kmh} ${data.current.wind_dir}`} unit="KM/H" />
           <Stat label="PRECIP" value={`${data.current.precipitation}`} unit="MM" />
           <Stat label="SUNRISE" value={sunriseTime} accent="amber" />
           <Stat label="SUNSET" value={sunsetTime} accent="amber" />
@@ -152,10 +152,10 @@ function ForecastDay({ day, isToday }: { day: WeatherData['forecast'][0]; isToda
         {ICONS[day.icon] ?? '☁'}
       </div>
       <div style={{ fontSize: 10, color: 'var(--accent-bright)', fontWeight: 700 }}>
-        {day.high}°
+        {day.high}°C
       </div>
       <div style={{ fontSize: 8, color: 'var(--text-secondary)' }}>
-        {day.low}°
+        {day.low}°C
       </div>
       {day.rain_chance > 20 && (
         <div style={{ fontSize: 7, color: 'var(--accent-primary)', marginTop: 2, letterSpacing: '0.1em' }}>
