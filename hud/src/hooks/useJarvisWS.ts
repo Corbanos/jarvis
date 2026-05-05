@@ -100,6 +100,18 @@ export function useJarvisWS() {
             case 'worldview':
               emitWorldviewEvent(event.payload as { action: string; lat?: number; lon?: number; name?: string });
               break;
+            case 'card': {
+              const ct = event.payload.cardType as string;
+              const data = event.payload.data as Record<string, unknown>;
+              const cardXml = `<jarvis-card type="${ct}">${JSON.stringify(data)}</jarvis-card>`;
+              addMessage({
+                id: `card-${event.timestamp}`,
+                role: 'assistant',
+                text: cardXml,
+                timestamp: event.timestamp,
+              });
+              break;
+            }
             case 'telemetry':
               addTelemetry({ source: event.payload.source as string, event: event.payload.event as string, data: event.payload.data as Record<string, unknown>, timestamp: event.timestamp });
               break;

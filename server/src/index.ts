@@ -14,6 +14,9 @@ import { scheduleTool } from './tools/schedule.js';
 import { weatherTool } from './tools/weather.js';
 import { dismissTool, setDismissHandler } from './tools/dismiss.js';
 import { worldviewTool, setWorldviewBroadcast } from './tools/worldview.js';
+import { cadTool, setCadBroadcast } from './tools/cad.js';
+import { printerTool, setPrinterBroadcast } from './tools/printer.js';
+import { cadRoutes } from './routes/cad.js';
 import { chatRoutes } from './routes/chat.js';
 import { agentRoutes } from './routes/agents.js';
 import { telemetryRoutes } from './routes/telemetry.js';
@@ -88,6 +91,7 @@ async function main() {
   await app.register(telemetryRoutes);
   await app.register(voiceRoutes);
   await app.register(jobRoutes);
+  await app.register(cadRoutes);
 
   app.get('/api/health', async () => ({
     status: 'OPERATIONAL', system: 'J.A.R.V.I.S.', version: '2.0.0',

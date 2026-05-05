@@ -12,6 +12,7 @@
     "@fastify/cors": "latest",
     "@fastify/websocket": "latest",
     "@nut-tree-fork/nut-js": "^4.2.6",
+    "bambu-node": "^3.22.21",
     "better-sqlite3": "latest",
     "dotenv": "latest",
     "fastify": "^5",
