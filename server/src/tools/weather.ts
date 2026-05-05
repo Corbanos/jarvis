@@ -1,8 +1,14 @@
 import type { ToolDefinition } from '../types/index.js';
 
+let _broadcastModule: ((event: string, payload: Record<string, unknown>) => void) | null = null;
+export function setWeatherBroadcast(fn: (event: string, payload: Record<string, unknown>) => void) {
+  _broadcastModule = fn;
+}
+
 /**
  * Weather tool — uses Open-Meteo (free, no API key)
- * Returns rich JSON the model can embed as a <jarvis-card type="weather">
+ * Returns rich JSON the model can embed as a <jarvis-card type="weather">.
+ * Also auto-opens a 'weather' workspace window with the data.
  */
 export const weatherTool: ToolDefinition = {
   name: 'weather',
@@ -87,6 +93,11 @@ It's currently 64 degrees and partly cloudy in San Francisco, sir. Pleasant even
           rain_chance: w.daily.precipitation_probability_max[i] ?? 0,
         })),
       };
+
+      // Auto-open a dedicated weather window in the HUD
+      if (_broadcastModule) {
+        _broadcastModule('module', { action: 'open', type: 'weather', data });
+      }
 
       return JSON.stringify(data);
     } catch (err) {

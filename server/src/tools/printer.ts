@@ -2,9 +2,14 @@ import type { ToolDefinition } from '../types/index.js';
 import { getStatus, isConfigured, saveBambuConfig, loadBambuConfig } from '../modules/bambu.js';
 
 let _broadcastCard: ((cardType: string, data: Record<string, unknown>) => void) | null = null;
+let _broadcastModule: ((event: string, payload: Record<string, unknown>) => void) | null = null;
 
 export function setPrinterBroadcast(fn: (cardType: string, data: Record<string, unknown>) => void) {
   _broadcastCard = fn;
+}
+
+export function setPrinterModuleBroadcast(fn: (event: string, payload: Record<string, unknown>) => void) {
+  _broadcastModule = fn;
 }
 
 export const printerTool: ToolDefinition = {
@@ -65,13 +70,13 @@ Then call: printer(action="configure", host="...", accessCode="...", serial="...
         const st = await getStatus();
         if ('error' in st) return st.error;
 
-        // Send card to HUD
-        if (_broadcastCard) {
-          _broadcastCard('printer', {
-            connected: st.connected,
-            data: st.data,
-          });
-        }
+        const cardData = {
+          connected: st.connected,
+          data: st.data,
+        };
+
+        if (_broadcastCard) _broadcastCard('printer', cardData);
+        if (_broadcastModule) _broadcastModule('module', { action: 'open', type: 'printer', data: cardData });
 
         if (!st.connected) return 'Printer configured but not connected (yet). MQTT may take a moment.';
 

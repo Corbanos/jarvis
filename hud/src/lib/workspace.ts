@@ -17,7 +17,8 @@ export type ModuleType =
   | 'worldview'
   | 'browser'
   | 'shell'
-  | 'cad-preview';
+  | 'cad-preview'
+  | 'weather';
 
 export interface ModuleInstance {
   id: string;             // unique instance id
@@ -60,6 +61,7 @@ const DEFAULT_SIZES: Record<ModuleType, { width: number; height: number }> = {
   browser:        { width: 600, height: 480 },
   shell:          { width: 540, height: 380 },
   'cad-preview':  { width: 520, height: 580 },
+  weather:        { width: 460, height: 480 },
 };
 
 const DEFAULTS: { modules: ModuleInstance[]; topZ: number } = {

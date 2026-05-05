@@ -10,6 +10,7 @@ import { TelemetryFeed } from '@/components/TelemetryFeed';
 import { SystemTelemetry } from '@/components/SystemTelemetry';
 import { CadLibrary } from '@/components/Modules/CadLibrary';
 import { CadPreviewModule } from '@/components/Modules/CadPreviewModule';
+import { WeatherModule } from '@/components/Modules/WeatherModule';
 import { ShellModule } from '@/components/Modules/ShellModule';
 import { useJarvisStore } from '@/lib/store';
 
@@ -30,11 +31,12 @@ const REGISTRY: Record<string, ModuleConfig> = {
   telemetry:       { title: 'EVENT FEED',          accent: '#00e5ff', Component: () => <TelemetryFeed /> },
   system:          { title: 'SYSTEM TELEMETRY',    accent: '#00e5ff', Component: () => <SystemTelemetry /> },
   cad:             { title: 'CAD LIBRARY',         accent: '#00e5ff', Component: () => <CadLibrary /> },
-  printer:         { title: 'BAMBU PRINTER',       accent: '#00e5ff', Component: () => <PrinterModule /> },
+  printer:         { title: 'BAMBU PRINTER',       accent: '#00e5ff', Component: ({ module }) => <PrinterModule module={module} /> },
   worldview:       { title: 'WORLDVIEW',           accent: '#00ff9d', Component: () => <WorldviewModule /> },
   browser:         { title: 'BROWSER PREVIEW',     accent: '#00e5ff', Component: () => <BrowserPlaceholder /> },
   shell:           { title: 'SHELL',               accent: '#ff8c00', Component: () => <ShellModule /> },
   'cad-preview':   { title: 'CAD PREVIEW',         accent: '#00e5ff', Component: ({ module }) => <CadPreviewModule module={module} /> },
+  weather:         { title: 'ATMOSPHERIC',         accent: '#00e5ff', Component: ({ module }) => <WeatherModule module={module} /> },
 };
 
 export function Workspace() {
@@ -85,19 +87,22 @@ function WorldviewModule() {
   );
 }
 
-function PrinterModule() {
-  // For now, surface the PrinterCard with empty data — gets populated when status arrives
-  // Long term: this should show live printer state, history, etc.
+function PrinterModule({ module }: { module: import('@/lib/workspace').ModuleInstance }) {
   const messages = useJarvisStore((s) => s.messages);
-  // Find latest printer card in messages
-  const printerMatch = [...messages].reverse().find((m) =>
-    m.text.includes('<jarvis-card type="printer"')
-  );
-  let data: Record<string, unknown> | null = null;
-  if (printerMatch) {
-    const m = printerMatch.text.match(/<jarvis-card type="printer">([\s\S]*?)<\/jarvis-card>/);
-    if (m && m[1]) {
-      try { data = JSON.parse(m[1]); } catch { /* ignore */ }
+
+  // Prefer data passed when module was opened
+  let data: Record<string, unknown> | null = (module.data as Record<string, unknown>) ?? null;
+
+  // Fall back to latest printer card in chat history
+  if (!data) {
+    const printerMatch = [...messages].reverse().find((m) =>
+      m.text.includes('<jarvis-card type="printer"')
+    );
+    if (printerMatch) {
+      const m = printerMatch.text.match(/<jarvis-card type="printer">([\s\S]*?)<\/jarvis-card>/);
+      if (m && m[1]) {
+        try { data = JSON.parse(m[1]); } catch { /* ignore */ }
+      }
     }
   }
 

@@ -6,7 +6,7 @@ export function setModuleBroadcast(fn: (event: string, payload: Record<string, u
   _broadcast = fn;
 }
 
-const MODULE_TYPES = ['chat', 'agents', 'scheduler', 'telemetry', 'system', 'cad', 'cad-preview', 'printer', 'worldview', 'browser', 'shell'] as const;
+const MODULE_TYPES = ['chat', 'agents', 'scheduler', 'telemetry', 'system', 'cad', 'cad-preview', 'weather', 'printer', 'worldview', 'browser', 'shell'] as const;
 
 export const moduleTool: ToolDefinition = {
   name: 'module',
