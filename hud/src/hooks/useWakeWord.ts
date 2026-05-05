@@ -14,6 +14,8 @@ let _isRecording = false;
 let _lastTriggerAt = 0;
 let _isAwake = false;
 let _awakeSince = 0;
+let _lastProcessedTranscript = '';
+let _lastProcessedAt = 0;
 
 interface UseWakeWordOptions {
   onTranscript: (text: string) => void;
@@ -188,7 +190,7 @@ export function useWakeWord({ onTranscript, onStateChange, enabled = true }: Use
 
       const recognition = new SpeechRecognition!();
       recognition.continuous = true;
-      recognition.interimResults = false;
+      recognition.interimResults = true; // both interim and final — needed for http://localhost
       recognition.lang = 'en-US';
       recognition.maxAlternatives = 1;
 
@@ -200,22 +202,44 @@ export function useWakeWord({ onTranscript, onStateChange, enabled = true }: Use
       recognition.onresult = (event: any) => {
         for (let i = event.resultIndex; i < event.results.length; i++) {
           const result = event.results[i];
-          if (!result?.isFinal) continue;
+          if (!result) continue;
 
           const transcript = result[0]?.transcript.toLowerCase().trim() ?? '';
-          if (!transcript) continue;
+          if (!transcript || transcript.length < 2) continue;
 
-          console.log(`[WakeWord] heard: "${transcript}"  (state=${_isAwake ? 'AWAKE' : 'ASLEEP'})`);
+          const isFinal: boolean = result.isFinal;
+
+          // VERBOSE: log everything heard (interim included) so user sees SR is alive
+          if (isFinal) console.log(`[WakeWord] [SR] FINAL: "${transcript}"`);
+          else console.log(`[WakeWord] [SR] interim: "${transcript}"`);
+
+          // Dedup: skip same transcript processed in last 3 seconds
+          // (handles interim → final repeats AND interim flicker)
+          if (transcript === _lastProcessedTranscript && Date.now() - _lastProcessedAt < 3000) {
+            continue;
+          }
+
+          // For interim results, only act if we have a wake/sleep match
+          // (final results we always log + check)
+          const cfg = cfgRef.current;
+          const wakeHit = matchPhrase(transcript, cfg.wakePhrases, cfg.fuzzyMatch);
+          const sleepHit = matchPhrase(transcript, cfg.sleepPhrases, cfg.fuzzyMatch);
+
+          // For interim: only fire on a clear wake/sleep match (avoid mid-utterance noise)
+          // For final: always process (even bare conversation when awake)
+          if (!isFinal && !wakeHit && !sleepHit) continue;
+
+          _lastProcessedTranscript = transcript;
+          _lastProcessedAt = Date.now();
+
+          console.log(`[WakeWord] heard${isFinal ? '' : ' (interim)'}: "${transcript}"  (state=${_isAwake ? 'AWAKE' : 'ASLEEP'})`);
 
           if (_isRecording) continue; // already capturing
           if (Date.now() - _lastTriggerAt < COOLDOWN_MS) continue;
 
-          const cfg = cfgRef.current;
-
           if (_isAwake) {
-            // In conversation mode — every utterance goes to Jarvis
-            // Check sleep phrase first; if matches, send it through (handled in finishAndReturn) so Jarvis can reply, then sleep
-            const sleepHit = matchPhrase(transcript, cfg.sleepPhrases, cfg.fuzzyMatch);
+            // Conversation mode — every utterance (final only) goes to Jarvis
+            if (!isFinal) continue; // never send interim mid-utterance
             if (sleepHit) {
               console.log(`[WakeWord] ▶ Sleep phrase "${sleepHit}" detected — sending then sleeping`);
             }
@@ -224,7 +248,6 @@ export function useWakeWord({ onTranscript, onStateChange, enabled = true }: Use
           }
 
           // ASLEEP — only respond to wake phrase
-          const wakeHit = matchPhrase(transcript, cfg.wakePhrases, cfg.fuzzyMatch);
           if (!wakeHit) {
             console.log('[WakeWord]   (asleep, no wake match)');
             continue;
