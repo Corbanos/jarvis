@@ -1,6 +1,7 @@
 'use client';
 import { useEffect, useState } from 'react';
 import { useJarvisWS } from '@/hooks/useJarvisWS';
+import { useChatHistory } from '@/hooks/useChatHistory';
 import { useJarvisStore } from '@/lib/store';
 import { useAudioLevel } from '@/lib/audio-level';
 import { HexGrid } from '@/components/HexGrid';
@@ -54,6 +55,7 @@ function BootScreen() {
 
 function Dashboard() {
   useJarvisWS();
+  useChatHistory('default');
   const connected = useJarvisStore((s) => s.connected);
   const agents = useJarvisStore((s) => s.agents);
   const activeAgents = agents.filter((a) => a.status === 'running' || a.status === 'spawning').length;

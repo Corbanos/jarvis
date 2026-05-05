@@ -38,7 +38,9 @@ interface JarvisState {
   telemetry: TelemetryRecord[];
 
   setConnected: (v: boolean) => void;
+  setMessages: (m: ChatMessage[]) => void;
   addMessage: (m: ChatMessage) => void;
+  clearMessages: () => void;
   addThinkingToken: (t: string) => void;
   clearThinking: () => void;
   addToolCall: (t: ToolCallRecord) => void;
@@ -56,6 +58,10 @@ export const useJarvisStore = create<JarvisState>((set) => ({
   telemetry: [],
 
   setConnected: (v) => set({ connected: v }),
+
+  setMessages: (messages) => set({ messages, thinkingTokens: '' }),
+
+  clearMessages: () => set({ messages: [], thinkingTokens: '' }),
 
   addMessage: (m) =>
     set((s) => ({

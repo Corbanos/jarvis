@@ -61,6 +61,17 @@ export const memory = {
       .all(sessionId, limit) as Array<{ role: string; content: string }>;
   },
 
+  getFullMessages(sessionId: string, limit = 100): Array<{ id: string; role: string; content: string; timestamp: number }> {
+    const rows = db
+      .prepare('SELECT id, role, content, timestamp FROM messages WHERE session_id = ? ORDER BY timestamp ASC LIMIT ?')
+      .all(sessionId, limit) as Array<{ id: string; role: string; content: string; timestamp: number }>;
+    return rows;
+  },
+
+  clearSession(sessionId: string) {
+    db.prepare('DELETE FROM messages WHERE session_id = ?').run(sessionId);
+  },
+
   saveAgent(agent: {
     id: string;
     goal: string;

@@ -17,11 +17,22 @@ export function useJarvisTTS() {
   const ttsSpeed = useVoiceConfig((s) => s.ttsSpeed);
   const lastSpokenRef = useRef<string>('');
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const initialLoadDoneRef = useRef(false);
+  const seenIdsRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
+    // First time we see messages (e.g. loaded from history), mark them all as seen
+    // so we don't TTS the entire chat log on page load.
+    if (!initialLoadDoneRef.current && messages.length > 0) {
+      messages.forEach((m) => seenIdsRef.current.add(m.id));
+      initialLoadDoneRef.current = true;
+      return;
+    }
+
     const last = messages[messages.length - 1];
     if (!last || last.role !== 'assistant') return;
-    if (last.id === lastSpokenRef.current) return;
+    if (seenIdsRef.current.has(last.id)) return;
+    seenIdsRef.current.add(last.id);
     lastSpokenRef.current = last.id;
 
     if (!ttsEnabled) return;

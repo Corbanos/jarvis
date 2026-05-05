@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { v4 as uuid } from 'uuid';
+import { memory } from '../core/memory.js';
 
 export async function chatRoutes(app: FastifyInstance) {
   // Streaming chat endpoint
@@ -46,5 +47,22 @@ export async function chatRoutes(app: FastifyInstance) {
     const sessionId = body.sessionId ?? uuid();
     const result = await app.jarvis.chat(body.message, sessionId);
     return reply.send(result);
+  });
+
+  // Load message history for a session
+  app.get('/api/chat/history', async (request, reply) => {
+    const query = request.query as { sessionId?: string; limit?: string };
+    const sessionId = query.sessionId ?? 'default';
+    const limit = query.limit ? Math.min(500, parseInt(query.limit, 10)) : 100;
+    const messages = memory.getFullMessages(sessionId, limit);
+    return reply.send({ sessionId, messages });
+  });
+
+  // Clear a session's history
+  app.delete('/api/chat/history', async (request, reply) => {
+    const query = request.query as { sessionId?: string };
+    const sessionId = query.sessionId ?? 'default';
+    memory.clearSession(sessionId);
+    return reply.send({ ok: true, sessionId });
   });
 }

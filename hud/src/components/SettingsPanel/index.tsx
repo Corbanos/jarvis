@@ -1,6 +1,8 @@
 'use client';
 import { useState } from 'react';
 import { useVoiceConfig } from '@/lib/voice-config';
+import { clearChatHistory } from '@/hooks/useChatHistory';
+import { useJarvisStore } from '@/lib/store';
 
 export function SettingsButton() {
   const [open, setOpen] = useState(false);
@@ -124,13 +126,25 @@ function SettingsPanel({ onClose }: { onClose: () => void }) {
 
         </div>
 
-        <div style={{ padding: 16, borderTop: '1px solid rgba(0,229,255,0.15)', background: 'rgba(0,20,40,0.4)', display: 'flex', justifyContent: 'space-between', gap: 8 }}>
-          <button
-            onClick={() => { cfg.resetDefaults(); setWakeText(cfg.wakePhrases.join('\n')); setSleepText(cfg.sleepPhrases.join('\n')); }}
-            style={{ ...btnStyle, color: 'var(--text-dim)', borderColor: 'rgba(255,255,255,0.1)' }}
-          >
-            RESET DEFAULTS
-          </button>
+        <div style={{ padding: 16, borderTop: '1px solid rgba(0,229,255,0.15)', background: 'rgba(0,20,40,0.4)', display: 'flex', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button
+              onClick={() => { cfg.resetDefaults(); setWakeText(cfg.wakePhrases.join('\n')); setSleepText(cfg.sleepPhrases.join('\n')); }}
+              style={{ ...btnStyle, color: 'var(--text-dim)', borderColor: 'rgba(255,255,255,0.1)' }}
+            >
+              RESET DEFAULTS
+            </button>
+            <button
+              onClick={async () => {
+                if (!confirm('Erase all chat history? This cannot be undone.')) return;
+                await clearChatHistory('default');
+                useJarvisStore.getState().clearMessages();
+              }}
+              style={{ ...btnStyle, color: 'var(--accent-red)', borderColor: 'rgba(255,34,68,0.3)' }}
+            >
+              CLEAR HISTORY
+            </button>
+          </div>
           <button onClick={save} style={{ ...btnStyle, color: 'var(--accent-primary)', borderColor: 'rgba(0,229,255,0.4)', background: 'rgba(0,229,255,0.08)' }}>
             APPLY
           </button>
