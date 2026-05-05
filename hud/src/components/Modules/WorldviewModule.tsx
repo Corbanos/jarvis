@@ -41,6 +41,7 @@ export function WorldviewModule() {
   const [layerState, setLayerState] = useState<Record<string, boolean>>({});
   const [focusName, setFocusName] = useState<string>('');
   const [collapsed, setCollapsed] = useState(false);
+  const [pinCount, setPinCount] = useState(0);
 
   // Listen for postMessage from iframe (state snapshots, ready)
   useEffect(() => {
@@ -52,6 +53,7 @@ export function WorldviewModule() {
       } else if (data.type === 'worldview:state') {
         if (data.layers && typeof data.layers === 'object') setLayerState(data.layers);
         if (typeof data.mode === 'string') setMode(data.mode);
+        if (typeof data.pinCount === 'number') setPinCount(data.pinCount);
       }
     }
     window.addEventListener('message', onMsg);
@@ -70,7 +72,7 @@ export function WorldviewModule() {
         case 'focus':
           if (typeof cmd.lat === 'number' && typeof cmd.lon === 'number') {
             setFocusName(cmd.name ?? '');
-            post({ type: 'worldview:focus', lat: cmd.lat, lon: cmd.lon, name: cmd.name });
+            post({ type: 'worldview:focus', lat: cmd.lat, lon: cmd.lon, name: cmd.name, alt: cmd.alt, pitch: cmd.pitch });
           }
           break;
         case 'layer':
@@ -81,6 +83,12 @@ export function WorldviewModule() {
           break;
         case 'mode':
           if (cmd.mode) post({ type: 'worldview:mode', mode: cmd.mode });
+          break;
+        case 'pins':
+          post({ type: 'worldview:pins', pins: cmd.pins ?? [], clear: !!cmd.clear, fit: cmd.fit !== false });
+          break;
+        case 'clear-pins':
+          post({ type: 'worldview:clear-pins' });
           break;
       }
     }
@@ -236,24 +244,55 @@ export function WorldviewModule() {
         )}
 
         {!collapsed && (
-          <div style={{
-            padding: '6px 8px',
-            borderTop: '1px solid rgba(0,229,255,0.1)',
-            fontSize: 8,
-            color: 'var(--text-dim)',
-            letterSpacing: '0.15em',
-            display: 'flex',
-            justifyContent: 'space-between',
-          }}>
-            <span style={{ color: ready ? 'var(--accent-green)' : 'var(--accent-amber)' }}>
-              {ready ? '● ONLINE' : '◌ BOOT…'}
-            </span>
-            {focusName && (
-              <span style={{ color: 'var(--accent-amber)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 100 }}>
-                {focusName.toUpperCase()}
-              </span>
+          <>
+            {pinCount > 0 && (
+              <div style={{
+                padding: '6px 8px',
+                borderTop: '1px solid rgba(0,229,255,0.1)',
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                gap: 6,
+              }}>
+                <span style={{ fontSize: 9, color: 'var(--accent-amber)', letterSpacing: '0.15em' }}>
+                  ◇ {pinCount} PIN{pinCount === 1 ? '' : 'S'}
+                </span>
+                <button
+                  onClick={() => iframeRef.current?.contentWindow?.postMessage({ type: 'worldview:clear-pins' }, '*')}
+                  style={{
+                    background: 'rgba(255,59,59,0.08)',
+                    border: '1px solid rgba(255,59,59,0.3)',
+                    borderRadius: 2,
+                    color: '#ff5577',
+                    fontSize: 8,
+                    letterSpacing: '0.15em',
+                    padding: '3px 7px',
+                    cursor: 'pointer',
+                    fontFamily: 'inherit',
+                    fontWeight: 700,
+                  }}
+                >CLEAR</button>
+              </div>
             )}
-          </div>
+            <div style={{
+              padding: '6px 8px',
+              borderTop: '1px solid rgba(0,229,255,0.1)',
+              fontSize: 8,
+              color: 'var(--text-dim)',
+              letterSpacing: '0.15em',
+              display: 'flex',
+              justifyContent: 'space-between',
+            }}>
+              <span style={{ color: ready ? 'var(--accent-green)' : 'var(--accent-amber)' }}>
+                {ready ? '● ONLINE' : '◌ BOOT…'}
+              </span>
+              {focusName && (
+                <span style={{ color: 'var(--accent-amber)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 100 }}>
+                  {focusName.toUpperCase()}
+                </span>
+              )}
+            </div>
+          </>
         )}
       </div>
 

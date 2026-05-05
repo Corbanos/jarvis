@@ -19,14 +19,27 @@ import { useWorkspace, summon } from '@/lib/workspace';
 
 export const WV_EVENT = 'jarvis-worldview-event';
 
+export interface WorldviewPin {
+  lat: number;
+  lon: number;
+  label: string;
+  sub?: string;
+  tag?: 'cyan' | 'amber' | 'green' | 'red';
+}
+
 export interface WorldviewCommand {
-  action: 'open' | 'close' | 'focus' | 'layer' | 'layers' | 'mode';
+  action: 'open' | 'close' | 'focus' | 'layer' | 'layers' | 'mode' | 'pins' | 'clear-pins';
   lat?: number;
   lon?: number;
   name?: string;
+  alt?: number;
+  pitch?: number;
   enable?: boolean;
   layers?: Record<string, boolean>;
   mode?: 'normal' | 'nvg' | 'flir' | 'crt';
+  pins?: WorldviewPin[];
+  clear?: boolean;
+  fit?: boolean;
 }
 
 export function emitWorldviewEvent(payload: WorldviewCommand) {

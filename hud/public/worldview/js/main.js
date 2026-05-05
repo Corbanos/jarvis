@@ -5,27 +5,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 // KEYBOARD SHORTCUTS
 // ═══════════════════════════════════════════════════════════════════════════
-document.addEventListener('keydown', e => {
-  const tag = document.activeElement.tagName.toLowerCase();
-  if (tag === 'input' || tag === 'textarea') return;
-
-  switch(e.key) {
-    case '1': setMode('normal');  break;
-    case '2': setMode('nvg');     break;
-    case '3': setMode('flir');    break;
-    case '4': setMode('crt');     break;
-    case 'Escape': deselectEntity(); break;
-    case '/':
-      e.preventDefault();
-      const si = document.getElementById('search-input');
-      if (si) si.focus();
-      break;
-    default: {
-      const lm = LANDMARKS.find(l => l.key === e.key.toUpperCase());
-      if (lm) flyToLandmark(lm);
-    }
-  }
-});
+// Keyboard shortcuts disabled — controlled by parent HUD via postMessage.
 
 // ═══════════════════════════════════════════════════════════════════════════
 // BOOT
@@ -81,12 +61,7 @@ async function boot() {
   intelLog('SYS', 'WORLDVIEW online — all subsystems nominal');
   intelLog('SYS', 'Camera discovery armed — zoom into a city and enable CCTV to scan');
 
-  // Auto-enable core layers with staggered loading
-  setTimeout(() => toggleLayer('satellites'), 1500);
-  setTimeout(() => toggleLayer('flights'),   3500);
-  setTimeout(() => toggleLayer('seismic'),   5500);
-  setTimeout(() => toggleLayer('iss'),       7000);
-  setTimeout(() => toggleLayer('weather'),   8500);
+  // No auto layers — the parent HUD enables them via postMessage.
 }
 
 boot();

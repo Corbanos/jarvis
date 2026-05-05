@@ -168,6 +168,19 @@
   ::-webkit-scrollbar { width:4px; }
   ::-webkit-scrollbar-track { background:transparent; }
   ::-webkit-scrollbar-thumb { background:var(--border); border-radius:2px; }
+
+  /* ═══════════════════════════════════════════════════════════════════════
+   * JARVIS BARE-ENGINE OVERRIDE
+   * Hide all native Palantir chrome. The parent HUD owns the UI now and
+   * drives this iframe via js/bridge.js postMessage. The DOM nodes remain
+   * (their JS depends on them) — only their visual presence is suppressed.
+   * ═══════════════════════════════════════════════════════════════════════ */
+  #topbar, #left-panel, #bottombar, #intel-panel, #notify-stack,
+  #right-panel, #search-results, #cctv-panel, #cctv-fullscreen,
+  #loading-screen { display: none !important; }
+  /* Keep the full-bleed Cesium globe + filter overlays visible */
+  #cesiumContainer { inset: 0 !important; }
+  /* Pins are drawn through Cesium itself, so we stay clean. */
 </style>
 </head>
 <body>

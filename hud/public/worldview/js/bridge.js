@@ -1,24 +1,109 @@
 // ═══════════════════════════════════════════════════════════════════════════
 // JARVIS BRIDGE — postMessage protocol so the parent HUD can drive Worldview.
-// Commands accepted:
-//   { type: 'worldview:focus', lat, lon, name?, alt?, pitch? }
-//   { type: 'worldview:layer', name, enable }    // name in layers object
-//   { type: 'worldview:layers', layers: { name: bool, ... } }   // bulk
-//   { type: 'worldview:mode', mode: 'normal'|'nvg'|'flir'|'crt' }
-//   { type: 'worldview:state' }                  // request current state
 //
-// Emits:
-//   { type: 'worldview:ready' }                  on boot
-//   { type: 'worldview:state', layers, mode, ... } on demand or change
+// Commands accepted (parent → iframe):
+//   { type: 'worldview:focus', lat, lon, name?, alt?, pitch? }
+//   { type: 'worldview:layer', name, enable }
+//   { type: 'worldview:layers', layers: { name: bool, ... } }
+//   { type: 'worldview:mode', mode: 'normal'|'nvg'|'flir'|'crt' }
+//   { type: 'worldview:pins', pins: [{ lat, lon, label, sub?, tag? }],
+//        clear?: bool, fit?: bool }
+//   { type: 'worldview:clear-pins' }
+//   { type: 'worldview:state' }
+//
+// Events emitted (iframe → parent):
+//   { type: 'worldview:ready' }
+//   { type: 'worldview:state', layers, mode, pinCount }
 // ═══════════════════════════════════════════════════════════════════════════
 
 (function () {
+  // ─── Pin layer (Jarvis-controlled markers, e.g. "nearest 7-Eleven") ──────
+  // Cesium DataSource so pins are isolated from Palantir's layer system.
+  let pinDataSource = null;
+  function getPinDS() {
+    if (!pinDataSource && typeof viewer !== 'undefined' && viewer) {
+      pinDataSource = new Cesium.CustomDataSource('jarvis-pins');
+      viewer.dataSources.add(pinDataSource);
+    }
+    return pinDataSource;
+  }
+
+  const TAG_COLORS = {
+    cyan:  () => Cesium.Color.fromCssColorString('#00e5ff'),
+    amber: () => Cesium.Color.fromCssColorString('#ffb300'),
+    green: () => Cesium.Color.fromCssColorString('#00ff9d'),
+    red:   () => Cesium.Color.fromCssColorString('#ff3b3b'),
+  };
+
+  function clearPins() {
+    const ds = getPinDS();
+    if (ds) ds.entities.removeAll();
+  }
+
+  function addPins(pins, fit) {
+    const ds = getPinDS();
+    if (!ds || !Array.isArray(pins)) return 0;
+    const positions = [];
+    let count = 0;
+    for (const p of pins) {
+      if (typeof p.lat !== 'number' || typeof p.lon !== 'number') continue;
+      const color = (TAG_COLORS[p.tag] || TAG_COLORS.cyan)();
+      ds.entities.add({
+        position: Cesium.Cartesian3.fromDegrees(p.lon, p.lat, p.alt || 0),
+        point: {
+          pixelSize: 11,
+          color: color.withAlpha(0.5),
+          outlineColor: color,
+          outlineWidth: 2,
+          heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+          disableDepthTestDistance: Number.POSITIVE_INFINITY,
+        },
+        label: p.label ? {
+          text: p.label,
+          font: '11px "Courier New", monospace',
+          fillColor: color,
+          outlineColor: Cesium.Color.BLACK,
+          outlineWidth: 3,
+          style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+          pixelOffset: new Cesium.Cartesian2(0, -18),
+          showBackground: true,
+          backgroundColor: Cesium.Color.fromCssColorString('rgba(0,8,18,0.85)'),
+          backgroundPadding: new Cesium.Cartesian2(6, 4),
+          heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+          disableDepthTestDistance: Number.POSITIVE_INFINITY,
+        } : undefined,
+        description: p.sub || '',
+        properties: { jarvisPin: true, tag: p.tag || 'cyan' },
+      });
+      positions.push(Cesium.Cartesian3.fromDegrees(p.lon, p.lat));
+      count++;
+    }
+    if (fit && positions.length && typeof viewer !== 'undefined') {
+      viewer.camera.flyToBoundingSphere(
+        Cesium.BoundingSphere.fromPoints(positions),
+        { duration: 1.5, offset: new Cesium.HeadingPitchRange(0, Cesium.Math.toRadians(-55), 0) }
+      );
+    }
+    return count;
+  }
+
+  function pinCount() {
+    const ds = getPinDS();
+    return ds ? ds.entities.values.length : 0;
+  }
+
+  // ─── State + helpers ─────────────────────────────────────────────────────
   function post(msg) {
     try { window.parent.postMessage(msg, '*'); } catch (e) {}
   }
 
   function snapshotState() {
-    const out = { type: 'worldview:state', layers: {}, mode: (typeof currentMode !== 'undefined' ? currentMode : 'normal') };
+    const out = {
+      type: 'worldview:state',
+      layers: {},
+      mode: (typeof currentMode !== 'undefined' ? currentMode : 'normal'),
+      pinCount: pinCount(),
+    };
     if (typeof layers === 'object' && layers) {
       for (const k of Object.keys(layers)) out.layers[k] = !!layers[k].on;
     }
@@ -45,6 +130,7 @@
     return true;
   }
 
+  // ─── Inbound messages ────────────────────────────────────────────────────
   window.addEventListener('message', function (e) {
     const data = e.data;
     if (!data || typeof data !== 'object') return;
@@ -71,6 +157,15 @@
           try { setMode(data.mode); } catch (err) {}
           post(snapshotState());
         }
+        break;
+      case 'worldview:pins':
+        if (data.clear) clearPins();
+        addPins(data.pins || [], data.fit !== false);
+        post(snapshotState());
+        break;
+      case 'worldview:clear-pins':
+        clearPins();
+        post(snapshotState());
         break;
       case 'worldview:state':
         post(snapshotState());

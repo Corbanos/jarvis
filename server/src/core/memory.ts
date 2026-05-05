@@ -70,10 +70,11 @@ export const memory = {
   },
 
   getFullMessages(sessionId: string, limit = 100): Array<{ id: string; role: string; content: string; timestamp: number }> {
+    // Get the most recent N messages (DESC), then re-sort ascending for display.
     const rows = db
-      .prepare('SELECT id, role, content, timestamp FROM messages WHERE session_id = ? ORDER BY timestamp ASC LIMIT ?')
+      .prepare('SELECT id, role, content, timestamp FROM messages WHERE session_id = ? ORDER BY timestamp DESC LIMIT ?')
       .all(sessionId, limit) as Array<{ id: string; role: string; content: string; timestamp: number }>;
-    return rows;
+    return rows.reverse();
   },
 
   clearSession(sessionId: string) {

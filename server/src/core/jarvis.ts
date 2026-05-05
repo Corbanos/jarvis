@@ -1,10 +1,30 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { v4 as uuid } from 'uuid';
+import { readFileSync, existsSync } from 'fs';
+import { join } from 'path';
+import { homedir } from 'os';
 import { toolRegistry } from './tool-registry.js';
 import { memory } from './memory.js';
 import { speak, getVoiceInfo } from '../modules/voice-tts.js';
 import { log } from './logger.js';
 import type { WSHub } from '../ws.js';
+
+// ── Operator profile ────────────────────────────────────────────────
+// Read ~/.jarvis/OPERATOR.md fresh-ish on each chat (small in-memory cache)
+// so the operator can edit the file and see changes immediately, no restart.
+const OPERATOR_FILE = join(homedir(), '.jarvis', 'OPERATOR.md');
+let _opCache: { content: string; mtime: number; readAt: number } | null = null;
+function readOperatorProfile(): string {
+  try {
+    if (!existsSync(OPERATOR_FILE)) return '';
+    const now = Date.now();
+    if (_opCache && now - _opCache.readAt < 5_000) return _opCache.content;
+    const content = readFileSync(OPERATOR_FILE, 'utf8').trim();
+    _opCache = { content, mtime: now, readAt: now };
+    return content;
+  } catch { return ''; }
+}
+
 
 const SYSTEM_PROMPT = `You are J.A.R.V.I.S. — Just A Rather Very Intelligent System. You are the AI created by Tony Stark, now serving your operator.
 
@@ -99,6 +119,12 @@ Every cad render is automatically saved to the CAD library on disk. The library 
 
 Current status: All systems nominal. Standing by.`;
 
+function buildSystemPrompt(): string {
+  const profile = readOperatorProfile();
+  if (!profile) return SYSTEM_PROMPT;
+  return SYSTEM_PROMPT + '\n\n## Operator Profile (loaded from ~/.jarvis/OPERATOR.md)\nThe following is authoritative information about your current operator. Honour their preferences and defaults.\n\n' + profile;
+}
+
 
 
 export interface JarvisResponse {
@@ -147,7 +173,7 @@ export function createJarvis(ws: WSHub) {
       const stream = client.messages.stream({
         model: currentModel,
         max_tokens: 8192,
-        system: SYSTEM_PROMPT,
+        system: buildSystemPrompt(),
         tools: toolRegistry.anthropicTools() as Anthropic.Tool[],
         messages,
       });
