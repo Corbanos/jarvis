@@ -51,9 +51,7 @@ export interface JarvisResponse {
 }
 
 export function createJarvis(ws: WSHub) {
-  const client = new Anthropic({
-    apiKey: process.env['ANTHROPIC_API_KEY'],
-  });
+  const client = new Anthropic({ apiKey: process.env['ANTHROPIC_API_KEY'] });
 
   function broadcast(type: string, payload: Record<string, unknown>) {
     ws.broadcast({ type: type as never, payload, timestamp: Date.now() });
@@ -66,117 +64,105 @@ export function createJarvis(ws: WSHub) {
     opts: { speak?: boolean; isAgent?: boolean } = {}
   ): Promise<JarvisResponse> {
     const msgId = uuid();
-
     log.ai('User →', `"${userMessage.slice(0, 80)}"  [session=${sessionId}]`);
 
     memory.saveMessage(uuid(), sessionId, 'user', userMessage);
 
-    const history = memory.getMessages(sessionId, 30).reverse();
-    const anthropicMessages: Anthropic.MessageParam[] = history
+    // Build conversation from DB (last 30, exclude the one just saved, then re-add fresh)
+    const history = memory.getMessages(sessionId, 31).reverse();
+    const messages: Anthropic.MessageParam[] = history
       .slice(0, -1)
       .map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content }));
-    anthropicMessages.push({ role: 'user', content: userMessage });
+    messages.push({ role: 'user', content: userMessage });
 
-    let fullText = '';
+    let finalText = '';
     const toolCalls: Array<{ name: string; input: Record<string, unknown>; result: string }> = [];
-    let currentMessages = anthropicMessages;
-    let loopCount = 0;
-    let continueLoop = true;
 
-    broadcast('thinking', { sessionId, token: '', id: msgId, start: true });
+    broadcast('thinking', { sessionId, id: msgId, start: true });
 
-    while (continueLoop) {
-      loopCount++;
-      if (loopCount > 10) {
-        log.warn('AI', 'Agentic loop limit (10) reached — stopping');
-        break;
-      }
-
+    // Agentic loop — run model, execute any tool calls, repeat until model returns end_turn
+    const MAX_ITERATIONS = 12;
+    for (let iter = 0; iter < MAX_ITERATIONS; iter++) {
+      // Stream the response so HUD sees tokens live
+      let iterText = '';
       const stream = client.messages.stream({
         model: 'claude-opus-4-5',
         max_tokens: 8192,
         system: SYSTEM_PROMPT,
         tools: toolRegistry.anthropicTools() as Anthropic.Tool[],
-        messages: currentMessages,
+        messages,
       });
 
-      let currentToolUseId = '';
-      let currentToolName = '';
-      let currentToolInputJson = '';
-      const pendingToolUses: Array<{ id: string; name: string; input: Record<string, unknown> }> = [];
+      // Stream text tokens to HUD/caller as they arrive
+      stream.on('text', (token: string) => {
+        iterText += token;
+        onToken?.(token);
+        broadcast('thinking', { sessionId, token, id: msgId });
+      });
 
-      for await (const event of stream) {
-        if (event.type === 'content_block_start') {
-          if (event.content_block.type === 'tool_use') {
-            currentToolUseId = event.content_block.id;
-            currentToolName = event.content_block.name;
-            currentToolInputJson = '';
-          }
-        }
+      // Wait for the message to fully complete
+      const final = await stream.finalMessage();
 
-        if (event.type === 'content_block_delta') {
-          if (event.delta.type === 'text_delta') {
-            const token = event.delta.text;
-            fullText += token;
-            onToken?.(token);
-            broadcast('thinking', { sessionId, token, id: msgId });
-          } else if (event.delta.type === 'input_json_delta') {
-            currentToolInputJson += event.delta.partial_json;
-          }
-        }
+      // Append this iteration's text to overall response
+      finalText += iterText;
 
-        if (event.type === 'content_block_stop' && currentToolName) {
-          let parsedInput: Record<string, unknown> = {};
-          try { parsedInput = JSON.parse(currentToolInputJson || '{}'); } catch { /* ignore */ }
-          pendingToolUses.push({ id: currentToolUseId, name: currentToolName, input: parsedInput });
-          log.tool_call(currentToolName, sessionId);
-          broadcast('tool_call', { sessionId, name: currentToolName, input: parsedInput, status: 'executing', id: msgId });
-          currentToolName = '';
-          currentToolUseId = '';
-          currentToolInputJson = '';
-        }
-
-        if (event.type === 'message_stop') {
-          const finalMsg = await stream.finalMessage();
-
-          if (finalMsg.stop_reason === 'tool_use' && pendingToolUses.length > 0) {
-            const toolResults: Anthropic.ToolResultBlockParam[] = [];
-
-            for (const tu of pendingToolUses) {
-              const result = await toolRegistry.dispatch(tu.name, tu.input);
-              log.tool_result(tu.name, result);
-              toolCalls.push({ name: tu.name, input: tu.input, result });
-              toolResults.push({ type: 'tool_result', tool_use_id: tu.id, content: result });
-              broadcast('tool_result', { sessionId, name: tu.name, result: result.substring(0, 800), id: msgId });
-            }
-
-            currentMessages = [
-              ...currentMessages,
-              { role: 'assistant', content: finalMsg.content },
-              { role: 'user', content: toolResults },
-            ];
-          } else {
-            continueLoop = false;
-          }
-        }
+      // If the model decided it's done talking, exit the loop
+      if (final.stop_reason !== 'tool_use') {
+        break;
       }
+
+      // Otherwise, execute every tool_use block, then send results back
+      const toolUses = final.content.filter(
+        (b): b is Anthropic.ToolUseBlock => b.type === 'tool_use'
+      );
+
+      if (toolUses.length === 0) {
+        // Defensive: stop_reason said tool_use but no blocks present
+        break;
+      }
+
+      const toolResults: Anthropic.ToolResultBlockParam[] = [];
+      for (const tu of toolUses) {
+        log.tool_call(tu.name, sessionId);
+        broadcast('tool_call', {
+          sessionId, name: tu.name,
+          input: tu.input as Record<string, unknown>,
+          status: 'executing', id: msgId,
+        });
+
+        const result = await toolRegistry.dispatch(tu.name, tu.input as Record<string, unknown>);
+        log.tool_result(tu.name, result);
+
+        toolCalls.push({ name: tu.name, input: tu.input as Record<string, unknown>, result });
+        toolResults.push({ type: 'tool_result', tool_use_id: tu.id, content: result });
+
+        broadcast('tool_result', {
+          sessionId, name: tu.name,
+          result: result.slice(0, 800), id: msgId,
+        });
+      }
+
+      // Append assistant message + tool results to conversation, then loop
+      messages.push({ role: 'assistant', content: final.content });
+      messages.push({ role: 'user', content: toolResults });
     }
 
-    if (fullText) {
-      memory.saveMessage(uuid(), sessionId, 'assistant', fullText);
-      log.ai('Jarvis →', `"${fullText.slice(0, 100)}"${fullText.length > 100 ? '…' : ''}`);
+    // Save Jarvis's final response
+    if (finalText) {
+      memory.saveMessage(uuid(), sessionId, 'assistant', finalText);
+      log.ai('Jarvis →', `"${finalText.slice(0, 100)}"${finalText.length > 100 ? '…' : ''}`);
     }
 
-    broadcast('message', { sessionId, id: msgId, role: 'assistant', text: fullText });
+    broadcast('message', { sessionId, id: msgId, role: 'assistant', text: finalText });
 
-    // Speak non-agent responses under 600 chars
-    if (opts.speak !== false && !opts.isAgent && fullText && fullText.length < 600) {
-      const voiceInfo = await getVoiceInfo();
-      log.tts(fullText, voiceInfo.kokoroAvailable ? 'Kokoro' : `macOS ${voiceInfo.voice}`);
-      speak(fullText).catch(() => { /* silent */ });
+    // Speak short, non-agent responses
+    if (opts.speak !== false && !opts.isAgent && finalText && finalText.length < 600) {
+      const v = await getVoiceInfo();
+      log.tts(finalText, v.kokoroAvailable ? 'Kokoro' : `macOS ${v.voice}`);
+      speak(finalText).catch(() => { /* silent */ });
     }
 
-    return { text: fullText, toolCalls };
+    return { text: finalText, toolCalls };
   }
 
   return { chat };
