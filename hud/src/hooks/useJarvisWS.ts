@@ -118,7 +118,7 @@ export function useJarvisWS() {
               triggerDismiss();
               break;
             case 'worldview':
-              emitWorldviewEvent(event.payload as { action: string; lat?: number; lon?: number; name?: string });
+              emitWorldviewEvent(event.payload as unknown as Parameters<typeof emitWorldviewEvent>[0]);
               break;
             case 'module': {
               const action = event.payload.action as string;

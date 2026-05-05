@@ -12,6 +12,7 @@ import { CadLibrary } from '@/components/Modules/CadLibrary';
 import { CadPreviewModule } from '@/components/Modules/CadPreviewModule';
 import { WeatherModule } from '@/components/Modules/WeatherModule';
 import { ShellModule } from '@/components/Modules/ShellModule';
+import { WorldviewModule } from '@/components/Modules/WorldviewModule';
 import { useJarvisStore } from '@/lib/store';
 
 export { Dock } from './Dock';
@@ -76,16 +77,6 @@ export function Workspace() {
 }
 
 // ── Embedded modules ──────────────────────────────────────────
-
-function WorldviewModule() {
-  return (
-    <iframe
-      src="/worldview/index.html"
-      style={{ width: '100%', height: '100%', border: 'none', background: '#000' }}
-      title="WORLDVIEW"
-    />
-  );
-}
 
 function PrinterModule({ module }: { module: import('@/lib/workspace').ModuleInstance }) {
   const messages = useJarvisStore((s) => s.messages);

@@ -57,7 +57,7 @@ const DEFAULT_SIZES: Record<ModuleType, { width: number; height: number }> = {
   system:         { width: 280, height: 360 },
   cad:            { width: 480, height: 540 },
   printer:        { width: 360, height: 380 },
-  worldview:      { width: 720, height: 540 },
+  worldview:      { width: 980, height: 640 },
   browser:        { width: 600, height: 480 },
   shell:          { width: 540, height: 380 },
   'cad-preview':  { width: 520, height: 580 },

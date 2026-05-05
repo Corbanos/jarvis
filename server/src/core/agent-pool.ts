@@ -90,10 +90,10 @@ export function createAgentPool(ws: WSHub) {
 
     const messages: Anthropic.MessageParam[] = [{ role: 'user', content: agent.goal }];
     let iter = 0;
-    const MAX_ITER = 100;
+    // No iteration cap — agents run until they finish, fail, are aborted, or context is exhausted.
 
     try {
-      while (iter < MAX_ITER) {
+      while (true) {
         iter++;
         if (abort.signal.aborted) {
           agent.status = 'failed';
@@ -183,10 +183,6 @@ export function createAgentPool(ws: WSHub) {
         messages.push({ role: 'user', content: toolResults });
       }
 
-      if (iter >= MAX_ITER && agent.status === 'running') {
-        agent.status = 'failed';
-        agent.logs.push('Agent hit max iterations');
-      }
     } catch (err) {
       log.error('Agent', `${agent.id}: ${err}`);
       agent.status = 'failed';

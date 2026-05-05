@@ -80,13 +80,13 @@ async function main() {
 
   initScheduler(
     (prompt, sessionId) => jarvis.chat(prompt, sessionId, undefined, { speak: true }),
-    (event) => ws.broadcast(event as Parameters<typeof ws.broadcast>[0])
+    (event) => ws.broadcast(event as unknown as Parameters<typeof ws.broadcast>[0])
   );
 
   // Request logging
-  app.addHook('onRequest', async (req) => { (req as Record<string, unknown>)['_start'] = Date.now(); });
+  app.addHook('onRequest', async (req) => { (req as unknown as Record<string, unknown>)['_start'] = Date.now(); });
   app.addHook('onResponse', async (req, reply) => {
-    const start = (req as Record<string, unknown>)['_start'] as number ?? Date.now();
+    const start = (req as unknown as Record<string, unknown>)['_start'] as number ?? Date.now();
     if (!req.url.includes('/ws') && !req.url.includes('/health')) {
       log.request(req.method, req.url, reply.statusCode, Date.now() - start);
     }
