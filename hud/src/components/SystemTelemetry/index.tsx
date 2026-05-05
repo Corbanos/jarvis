@@ -115,11 +115,21 @@ export function SystemTelemetry() {
 }
 
 function prettyModel(m: string): string {
-  if (m.includes('claude-sonnet-4')) return 'Sonnet 4';
-  if (m.includes('claude-3-5-sonnet')) return 'Sonnet 3.5';
-  if (m.includes('claude-3-opus')) return 'Opus';
-  if (m.includes('claude-3-5-haiku')) return 'Haiku 3.5';
-  if (m.includes('opus')) return 'Opus';
+  // Map api id → display name. Keep these in sync with AVAILABLE_MODELS.
+  if (m === 'claude-opus-4-7')              return 'Opus 4.7';
+  if (m === 'claude-sonnet-4-6')            return 'Sonnet 4.6';
+  if (m === 'claude-opus-4-6')              return 'Opus 4.6';
+  if (m === 'claude-opus-4-5-20251101')     return 'Opus 4.5';
+  if (m === 'claude-haiku-4-5-20251001')    return 'Haiku 4.5';
+  if (m === 'claude-sonnet-4-5-20250929')   return 'Sonnet 4.5';
+  if (m.includes('opus-4-7'))   return 'Opus 4.7';
+  if (m.includes('sonnet-4-6')) return 'Sonnet 4.6';
+  if (m.includes('opus-4-6'))   return 'Opus 4.6';
+  if (m.includes('opus-4-5'))   return 'Opus 4.5';
+  if (m.includes('haiku-4-5'))  return 'Haiku 4.5';
+  if (m.includes('sonnet-4-5')) return 'Sonnet 4.5';
+  if (m.includes('sonnet-4'))   return 'Sonnet 4';
+  if (m.includes('opus-4'))     return 'Opus 4';
   return m;
 }
 

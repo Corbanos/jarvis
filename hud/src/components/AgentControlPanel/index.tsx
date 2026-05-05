@@ -688,11 +688,21 @@ function LogLine({ text }: { text: string }) {
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
-function formatModelName(model: string): string {
-  if (model.includes('claude-sonnet-4')) return 'SONNET 4';
-  if (model.includes('claude-3-5-sonnet')) return 'SONNET 3.5';
-  if (model.includes('claude-3-opus')) return 'OPUS';
-  if (model.includes('claude-3-5-haiku')) return 'HAIKU 3.5';
-  if (model.includes('opus')) return 'OPUS';
-  return model.slice(0, 12).toUpperCase();
+function formatModelName(m: string): string {
+  // Map api id → display name. Keep these in sync with AVAILABLE_MODELS.
+  if (m === 'claude-opus-4-7')              return 'Opus 4.7';
+  if (m === 'claude-sonnet-4-6')            return 'Sonnet 4.6';
+  if (m === 'claude-opus-4-6')              return 'Opus 4.6';
+  if (m === 'claude-opus-4-5-20251101')     return 'Opus 4.5';
+  if (m === 'claude-haiku-4-5-20251001')    return 'Haiku 4.5';
+  if (m === 'claude-sonnet-4-5-20250929')   return 'Sonnet 4.5';
+  if (m.includes('opus-4-7'))   return 'Opus 4.7';
+  if (m.includes('sonnet-4-6')) return 'Sonnet 4.6';
+  if (m.includes('opus-4-6'))   return 'Opus 4.6';
+  if (m.includes('opus-4-5'))   return 'Opus 4.5';
+  if (m.includes('haiku-4-5'))  return 'Haiku 4.5';
+  if (m.includes('sonnet-4-5')) return 'Sonnet 4.5';
+  if (m.includes('sonnet-4'))   return 'Sonnet 4';
+  if (m.includes('opus-4'))     return 'Opus 4';
+  return m;
 }

@@ -133,7 +133,7 @@ export interface JarvisResponse {
 }
 
 // Current model used by Jarvis (shared with agent-pool)
-let currentModel = 'claude-sonnet-4-20250514';
+let currentModel = 'claude-sonnet-4-6';
 
 export function createJarvis(ws: WSHub) {
   const client = new Anthropic({ apiKey: process.env['ANTHROPIC_API_KEY'] });
