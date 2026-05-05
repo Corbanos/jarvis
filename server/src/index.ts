@@ -70,6 +70,35 @@ async function main() {
   toolRegistry.register(browserTool);
   toolRegistry.register(scheduleTool);
   toolRegistry.register(weatherTool);
+  toolRegistry.register(cadTool);
+  toolRegistry.register(printerTool);
+  toolRegistry.register(worldviewTool);
+  toolRegistry.register(moduleTool);
+
+  // ── Wire tool broadcasts to the WS hub ─────────────────────────────
+  // Tools that pop a HUD card or module emit through these helpers.
+  // Without this wiring, the tools silently fail with 'unavailable'.
+  const broadcastModule = (event: string, payload: Record<string, unknown>) => {
+    ws.broadcast({ type: event as never, payload, timestamp: Date.now() });
+  };
+  const broadcastCard = (cardType: string, data: Record<string, unknown>) => {
+    // Cards arrive on the chat path as a 'card' event; the HUD listens and
+    // injects them into the latest assistant message.
+    ws.broadcast({ type: 'card' as never, payload: { cardType, data }, timestamp: Date.now() });
+  };
+  setModuleBroadcast(broadcastModule);
+  setWorldviewBroadcast(broadcastModule);
+  setWeatherBroadcast(broadcastModule);
+  setCadBroadcast(broadcastCard);
+  setCadModuleBroadcast(broadcastModule);
+  setPrinterBroadcast(broadcastCard);
+  setPrinterModuleBroadcast(broadcastModule);
+
+  toolRegistry.register(dismissTool);
+  setDismissHandler(() => {
+    ws.broadcast({ type: 'dismiss' as never, payload: {}, timestamp: Date.now() });
+  });
+
 
   const agentPool = createAgentPool(ws);
   app.decorate('agentPool', agentPool);
