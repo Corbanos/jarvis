@@ -15,7 +15,8 @@ export type ModuleType =
   | 'printer'
   | 'worldview'
   | 'browser'
-  | 'shell';
+  | 'shell'
+  | 'cad-preview';
 
 export interface ModuleInstance {
   id: string;             // unique instance id
@@ -56,6 +57,7 @@ const DEFAULT_SIZES: Record<ModuleType, { width: number; height: number }> = {
   worldview:  { width: 720, height: 540 },
   browser:    { width: 600, height: 480 },
   shell:      { width: 540, height: 380 },
+  'cad-preview': { width: 520, height: 580 },
 };
 
 const DEFAULTS: { modules: ModuleInstance[]; topZ: number } = {

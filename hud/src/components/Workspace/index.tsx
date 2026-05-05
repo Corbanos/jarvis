@@ -8,6 +8,7 @@ import { SchedulerPanel } from '@/components/SchedulerPanel';
 import { TelemetryFeed } from '@/components/TelemetryFeed';
 import { SystemTelemetry } from '@/components/SystemTelemetry';
 import { CadLibrary } from '@/components/Modules/CadLibrary';
+import { CadPreviewModule } from '@/components/Modules/CadPreviewModule';
 import { ShellModule } from '@/components/Modules/ShellModule';
 import { useJarvisStore } from '@/lib/store';
 
@@ -31,6 +32,7 @@ const REGISTRY: Record<string, ModuleConfig> = {
   worldview:  { title: 'WORLDVIEW',         accent: '#00ff9d', Component: () => <WorldviewModule /> },
   browser:    { title: 'BROWSER PREVIEW',   accent: '#00e5ff', Component: () => <BrowserPlaceholder /> },
   shell:      { title: 'SHELL',             accent: '#ff8c00', Component: () => <ShellModule /> },
+  'cad-preview': { title: 'CAD PREVIEW',    accent: '#00e5ff', Component: ({ module }) => <CadPreviewModule module={module} /> },
 };
 
 export function Workspace() {

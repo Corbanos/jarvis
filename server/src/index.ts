@@ -14,7 +14,7 @@ import { scheduleTool } from './tools/schedule.js';
 import { weatherTool } from './tools/weather.js';
 import { dismissTool, setDismissHandler } from './tools/dismiss.js';
 import { worldviewTool, setWorldviewBroadcast } from './tools/worldview.js';
-import { cadTool, setCadBroadcast } from './tools/cad.js';
+import { cadTool, setCadBroadcast, setCadModuleBroadcast } from './tools/cad.js';
 import { printerTool, setPrinterBroadcast } from './tools/printer.js';
 import { moduleTool, setModuleBroadcast } from './tools/module.js';
 import { cadRoutes } from './routes/cad.js';

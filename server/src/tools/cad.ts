@@ -2,9 +2,14 @@ import type { ToolDefinition } from '../types/index.js';
 import { renderScad, listCadJobs, isAvailable } from '../modules/openscad.js';
 
 let _broadcastCard: ((cardType: string, data: Record<string, unknown>) => void) | null = null;
+let _broadcastModule: ((event: string, payload: Record<string, unknown>) => void) | null = null;
 
 export function setCadBroadcast(fn: (cardType: string, data: Record<string, unknown>) => void) {
   _broadcastCard = fn;
+}
+
+export function setCadModuleBroadcast(fn: (event: string, payload: Record<string, unknown>) => void) {
+  _broadcastModule = fn;
 }
 
 export const cadTool: ToolDefinition = {
@@ -53,17 +58,24 @@ After rendering, mention the STL location and offer to print it via the print to
 
         const sizeKB = result.size ? `${(result.size / 1024).toFixed(1)}KB` : '—';
 
-        // Broadcast a CAD card to the HUD
+        const cardData = {
+          name,
+          scadPath: result.scadPath,
+          stlPath: result.stlPath ?? null,
+          pngUrl: result.pngPath ? `/api/cad/preview?path=${encodeURIComponent(result.pngPath)}` : '',
+          stlUrl: result.stlPath ? `/api/cad/file?path=${encodeURIComponent(result.stlPath)}` : null,
+          size: result.size ?? 0,
+          duration: result.duration,
+        };
+
+        // Broadcast a CAD card to the HUD chat
         if (_broadcastCard && result.pngPath) {
-          _broadcastCard('cad', {
-            name,
-            scadPath: result.scadPath,
-            stlPath: result.stlPath ?? null,
-            pngUrl: `/api/cad/preview?path=${encodeURIComponent(result.pngPath)}`,
-            stlUrl: result.stlPath ? `/api/cad/file?path=${encodeURIComponent(result.stlPath)}` : null,
-            size: result.size ?? 0,
-            duration: result.duration,
-          });
+          _broadcastCard('cad', cardData);
+        }
+
+        // Also broadcast a workspace-open event so the HUD pops a dedicated preview window
+        if (_broadcastModule && result.pngPath) {
+          _broadcastModule('module', { action: 'open', type: 'cad-preview', data: cardData });
         }
 
         return `Rendered "${name}".

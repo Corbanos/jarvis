@@ -104,10 +104,16 @@ export function useJarvisWS() {
             case 'module': {
               const action = event.payload.action as string;
               const type = event.payload.type as ModuleType;
+              const data = event.payload.data as Record<string, unknown> | undefined;
               const ws = useWorkspace.getState();
-              if (action === 'open') summon(type);
-              else if (action === 'close') ws.closeByType(type);
-              else if (action === 'focus') {
+              if (action === 'open') {
+                // For modules with payloads (cad-preview), close any existing instance
+                // and reopen with new data so the preview shows the latest design
+                if (data) ws.closeByType(type);
+                summon(type, data);
+              } else if (action === 'close') {
+                ws.closeByType(type);
+              } else if (action === 'focus') {
                 const inst = ws.modules.find((m) => m.type === type);
                 if (inst) ws.focus(inst.id);
                 else summon(type);
