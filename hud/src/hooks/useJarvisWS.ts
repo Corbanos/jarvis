@@ -2,6 +2,10 @@
 import { useEffect, useRef } from 'react';
 import { useJarvisStore } from '@/lib/store';
 import { emitWorldviewEvent } from '@/components/Worldview';
+
+function existsByType(modules: Array<{ type: string }>, type: string): boolean {
+  return modules.some((m) => m.type === type);
+}
 import { useWorkspace, summon, type ModuleType } from '@/lib/workspace';
 import { computeWsUrl } from '@/lib/ws-url';
 
@@ -117,9 +121,27 @@ export function useJarvisWS() {
             case 'dismiss':
               triggerDismiss();
               break;
-            case 'worldview':
-              emitWorldviewEvent(event.payload as unknown as Parameters<typeof emitWorldviewEvent>[0]);
+            case 'worldview': {
+              const cmd = event.payload as unknown as Parameters<typeof emitWorldviewEvent>[0];
+              // Summon the worldview module for any visible action (everything
+              // except 'close'). The WorldviewModule component listens for the
+              // same event and forwards to its iframe.
+              if (cmd.action !== 'close') {
+                const wsState = useWorkspace.getState();
+                const existing = wsState.modules.find((m) => m.type === 'worldview');
+                if (!existing) summon('worldview');
+              } else {
+                useWorkspace.getState().closeByType('worldview');
+                break;
+              }
+              // Replay on next tick so a freshly mounted module catches it.
+              if (existsByType(useWorkspace.getState().modules, 'worldview')) {
+                emitWorldviewEvent(cmd);
+              } else {
+                setTimeout(() => emitWorldviewEvent(cmd), 80);
+              }
               break;
+            }
             case 'module': {
               const action = event.payload.action as string;
               const type = event.payload.type as ModuleType;
