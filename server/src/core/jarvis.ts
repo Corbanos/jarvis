@@ -81,13 +81,14 @@ export function createJarvis(ws: WSHub) {
     const toolCalls: Array<{ name: string; input: Record<string, unknown>; result: string }> = [];
     let currentMessages = anthropicMessages;
     let loopCount = 0;
+    let continueLoop = true;
 
     broadcast('thinking', { sessionId, token: '', id: msgId, start: true });
 
-    while (true) {
+    while (continueLoop) {
       loopCount++;
       if (loopCount > 10) {
-        log.warn('AI', 'Loop limit reached — breaking');
+        log.warn('AI', 'Agentic loop limit (10) reached — stopping');
         break;
       }
 
@@ -155,7 +156,7 @@ export function createJarvis(ws: WSHub) {
               { role: 'user', content: toolResults },
             ];
           } else {
-            break;
+            continueLoop = false;
           }
         }
       }
