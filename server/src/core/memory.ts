@@ -25,7 +25,8 @@ db.exec(`
     started_at INTEGER NOT NULL,
     completed_at INTEGER,
     logs TEXT NOT NULL DEFAULT '[]',
-    pid INTEGER
+    pid INTEGER,
+    model TEXT
   );
 
   CREATE TABLE IF NOT EXISTS jobs (
@@ -47,6 +48,13 @@ db.exec(`
     timestamp INTEGER NOT NULL
   );
 `);
+
+// Migration: add model column if it doesn't exist
+try {
+  db.exec(`ALTER TABLE agents ADD COLUMN model TEXT`);
+} catch {
+  // Column already exists
+}
 
 export const memory = {
   saveMessage(id: string, sessionId: string, role: string, content: string) {
@@ -80,10 +88,11 @@ export const memory = {
     completedAt?: number;
     logs: string[];
     pid?: number;
+    model?: string;
   }) {
     db.prepare(
-      `INSERT OR REPLACE INTO agents (id, goal, status, started_at, completed_at, logs, pid)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`
+      `INSERT OR REPLACE INTO agents (id, goal, status, started_at, completed_at, logs, pid, model)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       agent.id,
       agent.goal,
@@ -91,13 +100,32 @@ export const memory = {
       agent.startedAt,
       agent.completedAt ?? null,
       JSON.stringify(agent.logs),
-      agent.pid ?? null
+      agent.pid ?? null,
+      agent.model ?? null
     );
   },
 
   getAgents(): Array<Record<string, unknown>> {
     const rows = db.prepare('SELECT * FROM agents ORDER BY started_at DESC').all() as Array<Record<string, unknown>>;
     return rows.map((r) => ({ ...r, logs: JSON.parse(r['logs'] as string) }));
+  },
+
+  getAgent(id: string): Record<string, unknown> | undefined {
+    const row = db.prepare('SELECT * FROM agents WHERE id = ?').get(id) as Record<string, unknown> | undefined;
+    if (row) {
+      row['logs'] = JSON.parse(row['logs'] as string);
+    }
+    return row;
+  },
+
+  deleteAgent(id: string): boolean {
+    const result = db.prepare('DELETE FROM agents WHERE id = ?').run(id);
+    return result.changes > 0;
+  },
+
+  clearAgentHistory(): number {
+    const result = db.prepare('DELETE FROM agents WHERE status != ?').run('running');
+    return result.changes;
   },
 
   saveTelemetry(source: string, event: string, data: Record<string, unknown>) {

@@ -25,6 +25,8 @@ import { telemetryRoutes } from './routes/telemetry.js';
 import { voiceRoutes } from './routes/voice.js';
 import { jobRoutes } from './routes/jobs.js';
 import { setupRoutes, loadConfig, applyApiKey } from './routes/setup.js';
+import { authRoutes } from './routes/auth.js';
+import { registerAuth, getAccessToken } from './core/auth.js';
 import { initScheduler } from './modules/scheduler.js';
 import { checkAvailable as checkComputerUse } from './modules/computer-use.js';
 import { checkWhisperAvailable } from './modules/voice-vtt.js';
@@ -54,6 +56,9 @@ async function main() {
 
   const app = Fastify({ logger: false });
   await app.register(cors, { origin: '*' });
+
+  // Access token middleware (no-op if not configured)
+  registerAuth(app);
 
   const ws = await registerWS(app);
   app.decorate('ws', ws);
@@ -88,6 +93,7 @@ async function main() {
   });
 
   await app.register(setupRoutes);
+  await app.register(authRoutes);
   await app.register(chatRoutes);
   await app.register(agentRoutes);
   await app.register(telemetryRoutes);
@@ -110,6 +116,9 @@ async function main() {
   log.section('CAPABILITIES');
 
   const hasKey = !!process.env['ANTHROPIC_API_KEY']?.startsWith('sk-');
+  const accessToken = getAccessToken();
+  log.check('Access Token', !!accessToken, accessToken ? `enabled (${accessToken.slice(0,4)}...${accessToken.slice(-4)})` : 'OFF — local-only mode');
+
   log.check('Anthropic API Key', hasKey,
     hasKey ? `sk-...${process.env['ANTHROPIC_API_KEY']?.slice(-4)} (configured)` : 'NOT SET — configure via HUD at http://localhost:3001');
 

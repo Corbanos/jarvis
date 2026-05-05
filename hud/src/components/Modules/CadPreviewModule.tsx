@@ -3,6 +3,7 @@ import { useState } from 'react';
 import dynamic from 'next/dynamic';
 import { useJarvisStore } from '@/lib/store';
 import { type ModuleInstance } from '@/lib/workspace';
+import { withAuthToken } from '@/lib/auth';
 
 // 3D viewer is client-only (uses WebGL); load lazily so it doesn't bloat initial bundle
 const STLViewer = dynamic(() => import('./STLViewer').then((m) => m.STLViewer), {
@@ -89,12 +90,12 @@ function CadPreviewView({ data }: { data: CadData }) {
 
         {data.stlUrl ? (
           <div style={{ position: 'absolute', inset: 0 }}>
-            <STLViewer url={`${API}${data.stlUrl}`} />
+            <STLViewer url={withAuthToken(`${API}${data.stlUrl}`)} />
           </div>
         ) : !imgError ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img
-            src={`${API}${data.pngUrl}`}
+            src={withAuthToken(`${API}${data.pngUrl}`)}
             alt={data.name}
             onError={() => setImgError(true)}
             style={{ maxWidth: '95%', maxHeight: '95%', objectFit: 'contain', filter: 'drop-shadow(0 0 16px rgba(0,229,255,0.2))' }}
@@ -132,7 +133,7 @@ function CadPreviewView({ data }: { data: CadData }) {
         <div style={{ display: 'flex', gap: 6 }}>
           {data.stlUrl && (
             <a
-              href={`${API}${data.stlUrl}`}
+              href={withAuthToken(`${API}${data.stlUrl}`)}
               download
               style={{
                 ...btnStyle,
@@ -146,7 +147,7 @@ function CadPreviewView({ data }: { data: CadData }) {
             </a>
           )}
           <a
-            href={`${API}${data.pngUrl}`}
+            href={withAuthToken(`${API}${data.pngUrl}`)}
             target="_blank"
             rel="noopener noreferrer"
             style={{

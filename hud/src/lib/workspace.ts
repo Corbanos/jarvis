@@ -8,6 +8,7 @@ import { persist } from 'zustand/middleware';
 export type ModuleType =
   | 'chat'
   | 'agents'
+  | 'agent-control'
   | 'scheduler'
   | 'telemetry'
   | 'system'
@@ -47,17 +48,18 @@ interface WorkspaceState {
 }
 
 const DEFAULT_SIZES: Record<ModuleType, { width: number; height: number }> = {
-  chat:       { width: 460, height: 560 },
-  agents:     { width: 380, height: 480 },
-  scheduler:  { width: 380, height: 380 },
-  telemetry:  { width: 380, height: 380 },
-  system:     { width: 280, height: 360 },
-  cad:        { width: 480, height: 540 },
-  printer:    { width: 360, height: 380 },
-  worldview:  { width: 720, height: 540 },
-  browser:    { width: 600, height: 480 },
-  shell:      { width: 540, height: 380 },
-  'cad-preview': { width: 520, height: 580 },
+  chat:           { width: 460, height: 560 },
+  agents:         { width: 380, height: 480 },
+  'agent-control': { width: 680, height: 520 },
+  scheduler:      { width: 380, height: 380 },
+  telemetry:      { width: 380, height: 380 },
+  system:         { width: 280, height: 360 },
+  cad:            { width: 480, height: 540 },
+  printer:        { width: 360, height: 380 },
+  worldview:      { width: 720, height: 540 },
+  browser:        { width: 600, height: 480 },
+  shell:          { width: 540, height: 380 },
+  'cad-preview':  { width: 520, height: 580 },
 };
 
 const DEFAULTS: { modules: ModuleInstance[]; topZ: number } = {

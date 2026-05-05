@@ -10,23 +10,38 @@ import { ArcReactor } from '@/components/ArcReactor';
 import { SetupScreen } from '@/components/SetupScreen';
 import { Worldview } from '@/components/Worldview';
 import { Workspace } from '@/components/Workspace';
+import { authFetch } from '@/lib/auth';
+import { useAuth } from '@/lib/auth';
 
 const API = process.env['NEXT_PUBLIC_JARVIS_API'] ?? 'http://localhost:7777';
-type AppState = 'checking' | 'setup' | 'ready';
+type AppState = 'checking' | 'auth' | 'setup' | 'ready';
 
 export default function Home() {
   const [appState, setAppState] = useState<AppState>('checking');
 
   useEffect(() => {
-    fetch(`${API}/api/setup/status`)
+    // First check whether auth is enabled and we have a valid token
+    fetch(`${API}/api/auth/info`)
       .then((r) => r.json())
-      .then((data: { configured: boolean; valid: boolean }) => {
-        setAppState(data.configured && data.valid ? 'ready' : 'setup');
+      .then(async (info: { enabled: boolean }) => {
+        if (info.enabled) {
+          const token = useAuth.getState().token;
+          if (!token) { setAppState('auth'); return; }
+          const verify = await fetch(`${API}/api/auth/check`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ token }),
+          }).then((r) => r.json() as Promise<{ ok: boolean }>);
+          if (!verify.ok) { setAppState('auth'); return; }
+        }
+        // Then check API key config
+        const setupStatus = await authFetch(`${API}/api/setup/status`).then((r) => r.json() as Promise<{ configured: boolean; valid: boolean }>);
+        setAppState(setupStatus.configured && setupStatus.valid ? 'ready' : 'setup');
       })
-      .catch(() => setAppState('setup'));
+      .catch(() => setAppState('auth'));
   }, []);
 
   if (appState === 'checking') return <BootScreen />;
+  if (appState === 'auth') return <AuthScreen onComplete={() => setAppState('checking')} />;
   if (appState === 'setup') return <SetupScreen onComplete={() => setAppState('ready')} />;
   return <HQ />;
 }
@@ -137,6 +152,60 @@ function PointerEnabledLayer({ children }: { children: React.ReactNode }) {
   return (
     <div style={{ position: 'absolute', inset: 0, pointerEvents: 'auto' }}>
       {children}
+    </div>
+  );
+}
+
+function AuthScreen({ onComplete }: { onComplete: () => void }) {
+  const setToken = useAuth((s) => s.setToken);
+  const [input, setInput] = useState('');
+  const [error, setError] = useState('');
+  const [checking, setChecking] = useState(false);
+
+  const submit = async () => {
+    const t = input.trim();
+    if (!t) return;
+    setChecking(true); setError('');
+    try {
+      const res = await fetch(`${API}/api/auth/check`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: t }),
+      });
+      const data = await res.json() as { ok: boolean };
+      if (data.ok) { setToken(t); onComplete(); }
+      else setError('Invalid access token.');
+    } catch (e) { setError('Cannot reach JARVIS server.'); }
+    finally { setChecking(false); }
+  };
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: '#000', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'monospace', padding: 24 }}>
+      <div style={{ width: '100%', maxWidth: 520, background: 'rgba(0,8,18,0.95)', border: '1px solid rgba(0,229,255,0.3)', borderRadius: 4, padding: 28, boxShadow: '0 0 40px rgba(0,229,255,0.15)' }}>
+        <div style={{ fontSize: 24, fontWeight: 800, letterSpacing: '0.3em', color: '#00e5ff', textAlign: 'center', marginBottom: 6, textShadow: '0 0 20px rgba(0,229,255,0.5)' }}>J.A.R.V.I.S.</div>
+        <div style={{ fontSize: 9, color: 'rgba(255,140,0,0.8)', letterSpacing: '0.3em', textAlign: 'center', marginBottom: 22, fontWeight: 700 }}>
+          ◇ ACCESS TOKEN REQUIRED
+        </div>
+        <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.5)', marginBottom: 14, lineHeight: 1.6 }}>
+          This JARVIS instance is gated. Enter your access token to continue.
+          The token is set on the host machine via the local terminal.
+        </div>
+        <input
+          type="password"
+          value={input}
+          onChange={(e) => { setInput(e.target.value); if (error) setError(''); }}
+          onKeyDown={(e) => { if (e.key === 'Enter') submit(); }}
+          placeholder="Access token"
+          autoFocus
+          style={{ width: '100%', background: 'rgba(0,15,35,0.8)', border: `1px solid ${error ? 'rgba(255,34,68,0.5)' : 'rgba(0,229,255,0.3)'}`, borderRadius: 3, padding: '10px 12px', color: '#d0eeff', fontSize: 12, fontFamily: 'inherit', letterSpacing: '0.08em', outline: 'none', marginBottom: 8 }}
+        />
+        {error && <div style={{ fontSize: 10, color: '#ff4466', marginBottom: 10, letterSpacing: '0.1em' }}>✗ {error}</div>}
+        <button onClick={submit} disabled={checking || !input.trim()} style={{ width: '100%', background: 'rgba(0,229,255,0.1)', border: '1px solid rgba(0,229,255,0.4)', borderRadius: 3, color: '#00e5ff', padding: '10px', fontSize: 11, letterSpacing: '0.25em', fontFamily: 'inherit', fontWeight: 700, cursor: checking ? 'wait' : 'pointer', opacity: !input.trim() ? 0.4 : 1 }}>
+          {checking ? 'VERIFYING...' : 'AUTHENTICATE'}
+        </button>
+        <div style={{ fontSize: 8, color: 'rgba(0,229,255,0.3)', textAlign: 'center', marginTop: 16, letterSpacing: '0.15em' }}>
+          TOKEN STORED LOCALLY ON THIS DEVICE  ·  CLEAR VIA SETTINGS
+        </div>
+      </div>
     </div>
   );
 }

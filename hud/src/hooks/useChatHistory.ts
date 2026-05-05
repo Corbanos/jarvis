@@ -1,6 +1,7 @@
 'use client';
 import { useEffect, useRef } from 'react';
 import { useJarvisStore } from '@/lib/store';
+import { authFetch } from '@/lib/auth';
 
 const API = process.env['NEXT_PUBLIC_JARVIS_API'] ?? 'http://localhost:7777';
 
@@ -21,7 +22,7 @@ export function useChatHistory(sessionId = 'default') {
     if (loadedRef.current) return;
     loadedRef.current = true;
 
-    fetch(`${API}/api/chat/history?sessionId=${encodeURIComponent(sessionId)}&limit=100`)
+    authFetch(`${API}/api/chat/history?sessionId=${encodeURIComponent(sessionId)}&limit=100`)
       .then((r) => r.json())
       .then((data: HistoryResponse) => {
         if (!data.messages?.length) return;
@@ -39,7 +40,7 @@ export function useChatHistory(sessionId = 'default') {
 }
 
 export async function clearChatHistory(sessionId = 'default'): Promise<void> {
-  await fetch(`${API}/api/chat/history?sessionId=${encodeURIComponent(sessionId)}`, {
+  await authFetch(`${API}/api/chat/history?sessionId=${encodeURIComponent(sessionId)}`, {
     method: 'DELETE',
   });
 }

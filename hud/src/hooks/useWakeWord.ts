@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { startAudioLevels, useAudioLevel } from '@/lib/audio-level';
 import { useVoiceConfig, matchPhrase } from '@/lib/voice-config';
+import { authFetch } from '@/lib/auth';
 
 const API = process.env['NEXT_PUBLIC_JARVIS_API'] ?? 'http://localhost:7777';
 
@@ -169,7 +170,7 @@ export function useWakeWord({ onTranscript, onStateChange, enabled = true }: Use
     async function transcribe(blob: Blob): Promise<string> {
       const base64 = await blobToBase64(blob);
       try {
-        const res = await fetch(`${API}/api/voice/transcribe`, {
+        const res = await authFetch(`${API}/api/voice/transcribe`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ audio: base64, mimeType: 'audio/webm' }),

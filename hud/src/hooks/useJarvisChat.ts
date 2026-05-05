@@ -2,6 +2,7 @@
 import { useState, useCallback, useRef } from 'react';
 import { useJarvisStore } from '@/lib/store';
 import { v4 as uuid } from 'uuid';
+import { authFetch } from '@/lib/auth';
 
 const API = process.env['NEXT_PUBLIC_JARVIS_API'] ?? 'http://localhost:7777';
 
@@ -40,7 +41,7 @@ export function useJarvisChat() {
     clearThinking();
 
     try {
-      const res = await fetch(`${API}/api/chat`, {
+      const res = await authFetch(`${API}/api/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ message: trimmed, sessionId }),

@@ -1,5 +1,6 @@
 'use client';
 import { useState, useRef, useEffect, KeyboardEvent } from 'react';
+import { authFetch } from '@/lib/auth';
 
 const API = process.env['NEXT_PUBLIC_JARVIS_API'] ?? 'http://localhost:7777';
 
@@ -32,7 +33,7 @@ export function ShellModule() {
     // Direct route would be cleaner — but using existing /api/chat keeps things simple
     try {
       // Direct shell via the existing tool registry would need a new route. Use Jarvis chat:
-      const res = await fetch(`${API}/api/chat`, {
+      const res = await authFetch(`${API}/api/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -54,7 +55,7 @@ export function ShellModule() {
 
     // Better: hit a direct shell endpoint (we'll add one)
     try {
-      const r = await fetch(`${API}/api/shell`, {
+      const r = await authFetch(`${API}/api/shell`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ command: cmd }),

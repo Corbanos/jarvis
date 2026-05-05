@@ -2,10 +2,14 @@
   "name": "jarvis",
   "version": "0.1.0",
   "private": true,
-  "workspaces": ["server", "hud"],
+  "workspaces": [
+    "server",
+    "hud"
+  ],
   "scripts": {
     "dev": "concurrently \"npm run dev --workspace=server\" \"npm run dev --workspace=hud\"",
-    "build": "npm run build --workspace=server && npm run build --workspace=hud"
+    "build": "npm run build --workspace=server && npm run build --workspace=hud",
+    "set-token": "node scripts/set-access-token.mjs"
   },
   "devDependencies": {
     "concurrently": "latest"

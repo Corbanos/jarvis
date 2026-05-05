@@ -24,6 +24,7 @@ export interface AgentRecord {
   liveText?: string;     // streaming token output
   currentTool?: string;
   summary?: string;
+  model?: string;
 }
 
 export interface TelemetryRecord {
@@ -41,6 +42,13 @@ interface JarvisState {
   agents: AgentRecord[];
   telemetry: TelemetryRecord[];
   dismissNonce: number;
+  
+  // Model state
+  currentModel: string;
+  availableModels: string[];
+  
+  // Focused agent for Agent Control Panel
+  focusedAgentId: string | null;
 
   setConnected: (v: boolean) => void;
   triggerDismiss: () => void;
@@ -57,7 +65,16 @@ interface JarvisState {
   setAgentTool: (id: string, tool: string | undefined) => void;
   agentLog: (id: string, log: string) => void;
   completeAgent: (id: string, status: string, summary?: string) => void;
+  setAgents: (agents: AgentRecord[]) => void;
+  clearAgentHistory: () => void;
   addTelemetry: (t: TelemetryRecord) => void;
+  
+  // Model management
+  setCurrentModel: (model: string) => void;
+  setAvailableModels: (models: string[]) => void;
+  
+  // Agent focus
+  setFocusedAgent: (id: string | null) => void;
 }
 
 export const useJarvisStore = create<JarvisState>((set) => ({
@@ -68,6 +85,14 @@ export const useJarvisStore = create<JarvisState>((set) => ({
   agents: [],
   telemetry: [],
   dismissNonce: 0,
+  currentModel: 'claude-sonnet-4-20250514',
+  availableModels: [
+    'claude-sonnet-4-20250514',
+    'claude-3-5-sonnet-20241022',
+    'claude-3-opus-20240229',
+    'claude-3-5-haiku-20241022',
+  ],
+  focusedAgentId: null,
 
   setConnected: (v) => set({ connected: v }),
 
@@ -98,7 +123,14 @@ export const useJarvisStore = create<JarvisState>((set) => ({
       ),
     })),
 
-  addAgent: (a) => set((s) => ({ agents: [...s.agents, a] })),
+  addAgent: (a) => set((s) => {
+    // Check if agent already exists (from history load)
+    const existing = s.agents.find(ag => ag.id === a.id);
+    if (existing) {
+      return { agents: s.agents.map(ag => ag.id === a.id ? { ...ag, ...a } : ag) };
+    }
+    return { agents: [...s.agents, a] };
+  }),
 
   updateAgent: (id, patch) =>
     set((s) => ({
@@ -139,6 +171,22 @@ export const useJarvisStore = create<JarvisState>((set) => ({
       ),
     })),
 
+  setAgents: (agents) => set({ agents }),
+
+  clearAgentHistory: () =>
+    set((s) => ({
+      agents: s.agents.filter((a) => a.status === 'running'),
+      focusedAgentId: s.agents.find(a => a.id === s.focusedAgentId)?.status === 'running' 
+        ? s.focusedAgentId 
+        : null
+    })),
+
   addTelemetry: (t) =>
     set((s) => ({ telemetry: [...s.telemetry.slice(-200), t] })),
+
+  setCurrentModel: (model) => set({ currentModel: model }),
+  
+  setAvailableModels: (models) => set({ availableModels: models }),
+  
+  setFocusedAgent: (id) => set({ focusedAgentId: id }),
 }));

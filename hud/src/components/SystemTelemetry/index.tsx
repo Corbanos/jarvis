@@ -1,5 +1,6 @@
 'use client';
 import { useEffect, useState } from 'react';
+import { authFetch } from '@/lib/auth';
 
 const API = process.env['NEXT_PUBLIC_JARVIS_API'] ?? 'http://localhost:7777';
 
@@ -26,14 +27,14 @@ export function SystemTelemetry() {
     const tick = async () => {
       const t0 = performance.now();
       try {
-        const res = await fetch(`${API}/api/health`);
+        const res = await authFetch(`${API}/api/health`);
         setLatency(Math.round(performance.now() - t0));
         const data = await res.json() as SystemStats;
         setHealth(data);
       } catch { /* ignore */ }
     };
 
-    fetch(`${API}/api/voice/status`)
+    authFetch(`${API}/api/voice/status`)
       .then((r) => r.json())
       .then((d: VoiceStatus) => setVoice(d))
       .catch(() => { /* ignore */ });

@@ -4,6 +4,7 @@ import { useJarvisStore } from '@/lib/store';
 import { stripCards } from '@/components/JarvisCards/parser';
 import { attachTTSElement } from '@/lib/audio-level';
 import { useVoiceConfig } from '@/lib/voice-config';
+import { authFetch } from '@/lib/auth';
 
 const API = process.env['NEXT_PUBLIC_JARVIS_API'] ?? 'http://localhost:7777';
 
@@ -46,7 +47,7 @@ export function useJarvisTTS() {
 
     let aborted = false;
 
-    fetch(`${API}/api/voice/synthesize`, {
+    authFetch(`${API}/api/voice/synthesize`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ text: speakable, speed: ttsSpeed }),

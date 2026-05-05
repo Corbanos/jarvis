@@ -1,5 +1,6 @@
 'use client';
 import { useEffect, useState } from 'react';
+import { authFetch } from '@/lib/auth';
 
 interface Job {
   id: string;
@@ -20,7 +21,7 @@ export function SchedulerPanel() {
 
   const fetchJobs = async () => {
     try {
-      const res = await fetch(`${API}/api/jobs`);
+      const res = await authFetch(`${API}/api/jobs`);
       const data = await res.json() as Job[];
       setJobs(data);
     } catch { /* ignore */ }
@@ -34,12 +35,12 @@ export function SchedulerPanel() {
   }, []);
 
   const deleteJob = async (id: string) => {
-    await fetch(`${API}/api/jobs/${id}`, { method: 'DELETE' });
+    await authFetch(`${API}/api/jobs/${id}`, { method: 'DELETE' });
     fetchJobs();
   };
 
   const toggleJob = async (id: string, enabled: boolean) => {
-    await fetch(`${API}/api/jobs/${id}`, {
+    await authFetch(`${API}/api/jobs/${id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ enabled }),

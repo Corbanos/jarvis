@@ -107,6 +107,9 @@ export interface JarvisResponse {
   toolCalls: Array<{ name: string; input: Record<string, unknown>; result: string }>;
 }
 
+// Current model used by Jarvis (shared with agent-pool)
+let currentModel = 'claude-sonnet-4-20250514';
+
 export function createJarvis(ws: WSHub) {
   const client = new Anthropic({ apiKey: process.env['ANTHROPIC_API_KEY'] });
 
@@ -143,7 +146,7 @@ export function createJarvis(ws: WSHub) {
       // Stream the response so HUD sees tokens live
       let iterText = '';
       const stream = client.messages.stream({
-        model: 'claude-opus-4-5',
+        model: currentModel,
         max_tokens: 8192,
         system: SYSTEM_PROMPT,
         tools: toolRegistry.anthropicTools() as Anthropic.Tool[],
@@ -218,5 +221,15 @@ export function createJarvis(ws: WSHub) {
     return { text: finalText, toolCalls };
   }
 
-  return { chat };
+  function setModel(model: string): void {
+    currentModel = model;
+    log.info(`Jarvis model changed to: ${model}`);
+    broadcast('jarvis_model_changed', { model });
+  }
+
+  function getModel(): string {
+    return currentModel;
+  }
+
+  return { chat, setModel, getModel };
 }

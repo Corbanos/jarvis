@@ -1,5 +1,6 @@
 'use client';
 import { useState, useRef, useCallback, useEffect } from 'react';
+import { authFetch } from '@/lib/auth';
 
 interface VoiceInputProps {
   onTranscript: (text: string) => void;
@@ -95,7 +96,7 @@ export function VoiceInput({ onTranscript, onListeningChange }: VoiceInputProps)
           if (!base64) return;
           setProcessing(true);
           try {
-            const res = await fetch(`${API}/api/voice/transcribe`, {
+            const res = await authFetch(`${API}/api/voice/transcribe`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ audio: base64, mimeType: 'audio/webm' }),

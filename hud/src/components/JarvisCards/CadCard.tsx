@@ -1,5 +1,6 @@
 'use client';
 import { useState } from 'react';
+import { withAuthToken } from '@/lib/auth';
 
 const API = process.env['NEXT_PUBLIC_JARVIS_API'] ?? 'http://localhost:7777';
 
@@ -61,7 +62,7 @@ export function CadCard({ data }: { data: CadCardData }) {
         {!imgError ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img
-            src={`${API}${data.pngUrl}`}
+            src={withAuthToken(`${API}${data.pngUrl}`)}
             alt={data.name}
             onError={() => setImgError(true)}
             style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block' }}
@@ -87,7 +88,7 @@ export function CadCard({ data }: { data: CadCardData }) {
       <div style={{ display: 'flex', gap: 6 }}>
         {data.stlUrl && (
           <a
-            href={`${API}${data.stlUrl}`}
+            href={withAuthToken(`${API}${data.stlUrl}`)}
             download
             style={{
               ...btnStyle,
@@ -100,7 +101,7 @@ export function CadCard({ data }: { data: CadCardData }) {
           </a>
         )}
         <a
-          href={`${API}${data.pngUrl}`}
+          href={withAuthToken(`${API}${data.pngUrl}`)}
           target="_blank"
           rel="noopener noreferrer"
           style={{

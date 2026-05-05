@@ -4,6 +4,7 @@ import { FloatingPanel } from './FloatingPanel';
 import { Dock } from './Dock';
 import { JarvisChat } from '@/components/JarvisChat';
 import { AgentSwarm } from '@/components/AgentSwarm';
+import { AgentControlPanel } from '@/components/AgentControlPanel';
 import { SchedulerPanel } from '@/components/SchedulerPanel';
 import { TelemetryFeed } from '@/components/TelemetryFeed';
 import { SystemTelemetry } from '@/components/SystemTelemetry';
@@ -22,28 +23,39 @@ interface ModuleConfig {
 }
 
 const REGISTRY: Record<string, ModuleConfig> = {
-  chat:       { title: 'JARVIS INTERFACE',  accent: '#00e5ff', Component: () => <JarvisChat /> },
-  agents:     { title: 'AGENT NETWORK',     accent: '#ff8c00', Component: () => <AgentSwarm /> },
-  scheduler:  { title: 'SCHEDULER',         accent: '#00e5ff', Component: () => <SchedulerPanel /> },
-  telemetry:  { title: 'EVENT FEED',        accent: '#00e5ff', Component: () => <TelemetryFeed /> },
-  system:     { title: 'SYSTEM TELEMETRY',  accent: '#00e5ff', Component: () => <SystemTelemetry /> },
-  cad:        { title: 'CAD LIBRARY',       accent: '#00e5ff', Component: () => <CadLibrary /> },
-  printer:    { title: 'BAMBU PRINTER',     accent: '#00e5ff', Component: () => <PrinterModule /> },
-  worldview:  { title: 'WORLDVIEW',         accent: '#00ff9d', Component: () => <WorldviewModule /> },
-  browser:    { title: 'BROWSER PREVIEW',   accent: '#00e5ff', Component: () => <BrowserPlaceholder /> },
-  shell:      { title: 'SHELL',             accent: '#ff8c00', Component: () => <ShellModule /> },
-  'cad-preview': { title: 'CAD PREVIEW',    accent: '#00e5ff', Component: ({ module }) => <CadPreviewModule module={module} /> },
+  chat:            { title: 'JARVIS INTERFACE',    accent: '#00e5ff', Component: () => <JarvisChat /> },
+  agents:          { title: 'AGENT NETWORK',       accent: '#ff8c00', Component: () => <AgentSwarm /> },
+  'agent-control': { title: 'AGENT CONTROL',       accent: '#ff8c00', Component: () => <AgentControlPanel /> },
+  scheduler:       { title: 'SCHEDULER',           accent: '#00e5ff', Component: () => <SchedulerPanel /> },
+  telemetry:       { title: 'EVENT FEED',          accent: '#00e5ff', Component: () => <TelemetryFeed /> },
+  system:          { title: 'SYSTEM TELEMETRY',    accent: '#00e5ff', Component: () => <SystemTelemetry /> },
+  cad:             { title: 'CAD LIBRARY',         accent: '#00e5ff', Component: () => <CadLibrary /> },
+  printer:         { title: 'BAMBU PRINTER',       accent: '#00e5ff', Component: () => <PrinterModule /> },
+  worldview:       { title: 'WORLDVIEW',           accent: '#00ff9d', Component: () => <WorldviewModule /> },
+  browser:         { title: 'BROWSER PREVIEW',     accent: '#00e5ff', Component: () => <BrowserPlaceholder /> },
+  shell:           { title: 'SHELL',               accent: '#ff8c00', Component: () => <ShellModule /> },
+  'cad-preview':   { title: 'CAD PREVIEW',         accent: '#00e5ff', Component: ({ module }) => <CadPreviewModule module={module} /> },
 };
 
 export function Workspace() {
   const modules = useWorkspace((s) => s.modules);
+  const agents = useJarvisStore((s) => s.agents);
+  const runningAgents = agents.filter((a) => a.status === 'running');
 
   return (
     <>
       {modules.map((m) => {
         const cfg = REGISTRY[m.type];
         if (!cfg) return null;
-        const status = m.type === 'agents' ? 'amber' : m.type === 'chat' ? 'green' : 'none';
+        
+        // Dynamic status dots based on module type
+        let status: 'green' | 'amber' | 'red' | 'none' = 'none';
+        if (m.type === 'agents' || m.type === 'agent-control') {
+          status = runningAgents.length > 0 ? 'amber' : 'none';
+        } else if (m.type === 'chat') {
+          status = 'green';
+        }
+
         return (
           <FloatingPanel
             key={m.id}

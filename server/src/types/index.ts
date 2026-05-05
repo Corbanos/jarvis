@@ -4,11 +4,23 @@ export type WSEventType =
   | 'tool_result'
   | 'agent_spawn'
   | 'agent_update'
+  | 'agent_token'
+  | 'agent_tool'
+  | 'agent_tool_result'
   | 'agent_complete'
+  | 'agent_instruction'
+  | 'agent_instruction_queued'
+  | 'model_changed'
+  | 'jarvis_model_changed'
+  | 'agents_history_cleared'
   | 'telemetry'
   | 'message'
   | 'error'
-  | 'status';
+  | 'status'
+  | 'dismiss'
+  | 'worldview'
+  | 'module'
+  | 'card';
 
 export interface WSEvent {
   type: WSEventType;
@@ -24,6 +36,7 @@ export interface AgentRecord {
   completedAt?: number;
   logs: string[];
   pid?: number;
+  model?: string;
 }
 
 export interface ToolDefinition {

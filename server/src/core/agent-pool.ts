@@ -29,9 +29,23 @@ Begin work immediately on the goal you're given.`;
 
 interface InternalAgent extends AgentRecord {
   abortController?: AbortController;
+  pendingInstructions?: string[];  // Live instructions queue
 }
 
 const pool = new Map<string, InternalAgent>();
+
+// Current model for all agents
+let currentModel = 'claude-sonnet-4-20250514';
+
+// Available models
+export const AVAILABLE_MODELS = [
+  'claude-sonnet-4-20250514',
+  'claude-3-5-sonnet-20241022',
+  'claude-3-opus-20240229',
+  'claude-3-5-haiku-20241022',
+] as const;
+
+export type ClaudeModel = typeof AVAILABLE_MODELS[number];
 
 export function createAgentPool(ws: WSHub) {
   const client = new Anthropic({ apiKey: process.env['ANTHROPIC_API_KEY'] });
@@ -40,30 +54,64 @@ export function createAgentPool(ws: WSHub) {
     ws.broadcast({ type: type as never, payload, timestamp: Date.now() });
   }
 
+  // Load all persisted agents from DB on startup
+  function loadPersistedAgents() {
+    const dbAgents = memory.getAgents();
+    for (const row of dbAgents) {
+      if (!pool.has(row['id'] as string)) {
+        const agent: InternalAgent = {
+          id: row['id'] as string,
+          goal: row['goal'] as string,
+          status: row['status'] as AgentRecord['status'],
+          startedAt: row['started_at'] as number,
+          completedAt: row['completed_at'] as number | undefined,
+          logs: row['logs'] as string[],
+          model: row['model'] as string | undefined,
+        };
+        pool.set(agent.id, agent);
+      }
+    }
+  }
+
+  // Load on init
+  loadPersistedAgents();
+
   /**
    * Run the agent's main loop async — returns immediately with the agent record.
    */
   async function runAgent(agent: InternalAgent): Promise<void> {
     const abort = new AbortController();
     agent.abortController = abort;
+    agent.pendingInstructions = [];
 
+    const agentModel = agent.model ?? currentModel;
     log.agent('start', agent.id, agent.goal.slice(0, 80));
-    broadcast('agent_update', { id: agent.id, status: 'running' });
+    broadcast('agent_update', { id: agent.id, status: 'running', model: agentModel });
 
     const messages: Anthropic.MessageParam[] = [{ role: 'user', content: agent.goal }];
     let iter = 0;
-    const MAX_ITER = 25;
+    const MAX_ITER = 100;
 
     try {
       while (iter < MAX_ITER) {
         iter++;
         if (abort.signal.aborted) {
           agent.status = 'failed';
+          agent.logs.push('[ABORTED by operator]');
           break;
         }
 
+        // Check for live instructions injected by operator
+        if (agent.pendingInstructions && agent.pendingInstructions.length > 0) {
+          const instruction = agent.pendingInstructions.shift()!;
+          log.agent('instruction', agent.id, instruction.slice(0, 60));
+          messages.push({ role: 'user', content: `[LIVE INSTRUCTION FROM OPERATOR]: ${instruction}` });
+          agent.logs.push(`📨 INSTRUCTION: ${instruction}`);
+          broadcast('agent_instruction', { id: agent.id, instruction });
+        }
+
         const stream = client.messages.stream({
-          model: 'claude-opus-4-5',
+          model: agentModel,
           max_tokens: 8192,
           system: AGENT_SYSTEM_PROMPT,
           tools: toolRegistry.anthropicTools().filter((t) => t.name !== 'spawn_agent') as Anthropic.Tool[],
@@ -81,7 +129,7 @@ export function createAgentPool(ws: WSHub) {
 
         if (iterText.trim()) {
           agent.logs.push(iterText.trim());
-          memory.saveAgent({ ...agent, logs: agent.logs });
+          memory.saveAgent({ ...agent, logs: agent.logs, model: agentModel });
         }
 
         // Check for completion sentinel
@@ -112,6 +160,12 @@ export function createAgentPool(ws: WSHub) {
 
         const toolResults: Anthropic.ToolResultBlockParam[] = [];
         for (const tu of toolUses) {
+          // Check for abort before each tool
+          if (abort.signal.aborted) {
+            agent.status = 'failed';
+            break;
+          }
+
           log.agent('tool', agent.id, `${tu.name}`);
           broadcast('agent_tool', { id: agent.id, tool: tu.name, input: tu.input });
 
@@ -122,6 +176,8 @@ export function createAgentPool(ws: WSHub) {
 
           toolResults.push({ type: 'tool_result', tool_use_id: tu.id, content: result });
         }
+
+        if (abort.signal.aborted) break;
 
         messages.push({ role: 'assistant', content: final.content });
         messages.push({ role: 'user', content: toolResults });
@@ -138,7 +194,7 @@ export function createAgentPool(ws: WSHub) {
     }
 
     agent.completedAt = Date.now();
-    memory.saveAgent({ ...agent, logs: agent.logs });
+    memory.saveAgent({ ...agent, logs: agent.logs, model: agentModel });
 
     log.agent(agent.status === 'complete' ? 'complete' : 'failed', agent.id);
 
@@ -150,6 +206,7 @@ export function createAgentPool(ws: WSHub) {
       status: agent.status,
       summary,
       duration: agent.completedAt - agent.startedAt,
+      model: agentModel,
     });
   }
 
@@ -162,11 +219,12 @@ export function createAgentPool(ws: WSHub) {
         status: 'running',
         startedAt: Date.now(),
         logs: [],
+        model: currentModel,
       };
 
       pool.set(id, agent);
-      memory.saveAgent({ ...agent });
-      broadcast('agent_spawn', { id, goal, status: 'running' });
+      memory.saveAgent({ ...agent, model: currentModel });
+      broadcast('agent_spawn', { id, goal, status: 'running', model: currentModel });
 
       // Fire-and-forget: don't await
       runAgent(agent).catch((err) => log.error('Agent', String(err)));
@@ -180,20 +238,106 @@ export function createAgentPool(ws: WSHub) {
       agent.abortController?.abort();
       agent.status = 'failed';
       agent.completedAt = Date.now();
+      agent.logs.push('[KILLED by operator]');
       memory.saveAgent({ ...agent });
       broadcast('agent_complete', { id, status: 'failed', reason: 'killed by user' });
       return true;
     },
 
+    /**
+     * Send a live instruction to a running agent
+     */
+    sendInstruction(id: string, instruction: string): boolean {
+      const agent = pool.get(id);
+      if (!agent || agent.status !== 'running') return false;
+      if (!agent.pendingInstructions) agent.pendingInstructions = [];
+      agent.pendingInstructions.push(instruction);
+      broadcast('agent_instruction_queued', { id, instruction });
+      return true;
+    },
+
+    /**
+     * List all agents (both running and historical)
+     */
     list(): AgentRecord[] {
-      return Array.from(pool.values()).map(({ abortController: _ac, ...rest }) => rest);
+      return Array.from(pool.values()).map(({ abortController: _ac, pendingInstructions: _pi, ...rest }) => rest);
+    },
+
+    /**
+     * List only running agents
+     */
+    listRunning(): AgentRecord[] {
+      return this.list().filter((a) => a.status === 'running');
+    },
+
+    /**
+     * List only completed agents (historical)
+     */
+    listHistory(): AgentRecord[] {
+      return this.list().filter((a) => a.status !== 'running');
     },
 
     get(id: string): AgentRecord | undefined {
       const a = pool.get(id);
       if (!a) return undefined;
-      const { abortController: _ac, ...rest } = a;
+      const { abortController: _ac, pendingInstructions: _pi, ...rest } = a;
       return rest;
+    },
+
+    /**
+     * Get full logs for an agent
+     */
+    getLogs(id: string): string[] {
+      return pool.get(id)?.logs ?? [];
+    },
+
+    /**
+     * Set the model for all future agents
+     */
+    setModel(model: string): boolean {
+      if (!AVAILABLE_MODELS.includes(model as ClaudeModel)) return false;
+      currentModel = model;
+      broadcast('model_changed', { model });
+      return true;
+    },
+
+    /**
+     * Get current model
+     */
+    getModel(): string {
+      return currentModel;
+    },
+
+    /**
+     * Get available models
+     */
+    getAvailableModels(): string[] {
+      return [...AVAILABLE_MODELS];
+    },
+
+    /**
+     * Clear historical (non-running) agents
+     */
+    clearHistory(): number {
+      const toRemove: string[] = [];
+      for (const [id, agent] of pool) {
+        if (agent.status !== 'running') {
+          toRemove.push(id);
+        }
+      }
+      for (const id of toRemove) {
+        pool.delete(id);
+        memory.deleteAgent(id);
+      }
+      broadcast('agents_history_cleared', { count: toRemove.length });
+      return toRemove.length;
+    },
+
+    /**
+     * Reload agents from database (useful after restart)
+     */
+    reloadFromDB(): void {
+      loadPersistedAgents();
     },
   };
 }

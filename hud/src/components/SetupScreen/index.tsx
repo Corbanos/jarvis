@@ -1,5 +1,6 @@
 'use client';
 import { useState, useRef, useEffect, KeyboardEvent } from 'react';
+import { authFetch } from '@/lib/auth';
 
 const API = process.env['NEXT_PUBLIC_JARVIS_API'] ?? 'http://localhost:7777';
 
@@ -58,7 +59,7 @@ export function SetupScreen({ onComplete }: SetupScreenProps) {
     setError('');
 
     try {
-      const res = await fetch(`${API}/api/setup/key`, {
+      const res = await authFetch(`${API}/api/setup/key`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ key: trimmed }),

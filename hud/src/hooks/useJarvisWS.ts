@@ -3,8 +3,9 @@ import { useEffect, useRef } from 'react';
 import { useJarvisStore } from '@/lib/store';
 import { emitWorldviewEvent } from '@/components/Worldview';
 import { useWorkspace, summon, type ModuleType } from '@/lib/workspace';
+import { computeWsUrl } from '@/lib/ws-url';
 
-const WS_URL = process.env['NEXT_PUBLIC_JARVIS_WS'] ?? 'ws://localhost:7777/ws';
+const WS_URL = computeWsUrl();
 const MAX_RECONNECT_DELAY = 16000;
 
 export function useJarvisWS() {
@@ -24,6 +25,8 @@ export function useJarvisWS() {
   const completeAgent = useJarvisStore((s) => s.completeAgent);
   const triggerDismiss = useJarvisStore((s) => s.triggerDismiss);
   const addTelemetry = useJarvisStore((s) => s.addTelemetry);
+  const setCurrentModel = useJarvisStore((s) => s.setCurrentModel);
+  const clearAgentHistory = useJarvisStore((s) => s.clearAgentHistory);
 
   useEffect(() => {
     let cancelled = false;
@@ -62,12 +65,14 @@ export function useJarvisWS() {
                 startedAt: event.timestamp,
                 logs: [],
                 liveText: '',
+                model: event.payload.model as string | undefined,
               });
               break;
             case 'agent_update':
               updateAgent(event.payload.id as string, {
                 status: event.payload.status as string,
                 logs: event.payload.log ? [event.payload.log as string] : [],
+                model: event.payload.model as string | undefined,
               });
               break;
             case 'agent_token':
@@ -80,6 +85,13 @@ export function useJarvisWS() {
             case 'agent_tool_result':
               setAgentTool(event.payload.id as string, undefined);
               agentLog(event.payload.id as string, `  ← ${truncate(event.payload.result as string ?? '', 120)}`);
+              break;
+            case 'agent_instruction':
+              agentLog(event.payload.id as string, `📨 INSTRUCTION: ${event.payload.instruction as string}`);
+              break;
+            case 'agent_instruction_queued':
+              // Visual feedback that instruction was queued
+              agentLog(event.payload.id as string, `📬 Instruction queued: ${truncate(event.payload.instruction as string, 60)}`);
               break;
             case 'agent_complete':
               completeAgent(
@@ -94,6 +106,13 @@ export function useJarvisWS() {
                 text: agentCompletionMessage(event.payload),
                 timestamp: event.timestamp,
               });
+              break;
+            case 'model_changed':
+            case 'jarvis_model_changed':
+              setCurrentModel(event.payload.model as string);
+              break;
+            case 'agents_history_cleared':
+              clearAgentHistory();
               break;
             case 'dismiss':
               triggerDismiss();
@@ -155,7 +174,7 @@ export function useJarvisWS() {
       cancelled = true;
       ws.current?.close();
     };
-  }, [addThinkingToken, addToolCall, markToolDone, addMessage, setConnected, addAgent, updateAgent, appendAgentToken, setAgentTool, agentLog, completeAgent, triggerDismiss, addTelemetry]);
+  }, [addThinkingToken, addToolCall, markToolDone, addMessage, setConnected, addAgent, updateAgent, appendAgentToken, setAgentTool, agentLog, completeAgent, triggerDismiss, addTelemetry, setCurrentModel, clearAgentHistory]);
 }
 
 function truncate(s: string, n: number): string {
@@ -168,9 +187,11 @@ function agentCompletionMessage(payload: Record<string, unknown>): string {
   const summary = (payload['summary'] as string) ?? '';
   const dur = payload['duration'] as number | undefined;
   const durStr = dur ? ` (${(dur / 1000).toFixed(1)}s)` : '';
+  const model = payload['model'] as string | undefined;
+  const modelStr = model ? ` [${model.includes('sonnet') ? 'Sonnet' : model.includes('opus') ? 'Opus' : model.slice(0, 12)}]` : '';
 
   if (status === 'complete') {
-    return `Sub-agent finished, sir${durStr}.\n\n**${goal}**\n\n${summary}`;
+    return `Sub-agent finished, sir${durStr}${modelStr}.\n\n**${goal}**\n\n${summary}`;
   }
-  return `Sub-agent failed${durStr}: ${summary || 'unknown reason'}`;
+  return `Sub-agent failed${durStr}${modelStr}: ${summary || 'unknown reason'}`;
 }

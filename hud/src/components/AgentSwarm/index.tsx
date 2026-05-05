@@ -1,6 +1,7 @@
 'use client';
 import { useState } from 'react';
 import { useJarvisStore, type AgentRecord } from '@/lib/store';
+import { authFetch } from '@/lib/auth';
 
 const API = process.env['NEXT_PUBLIC_JARVIS_API'] ?? 'http://localhost:7777';
 
@@ -164,7 +165,7 @@ function AgentCard({ agent }: { agent: AgentRecord }) {
           {/* Kill button for running agents */}
           {isRunning && (
             <button
-              onClick={() => fetch(`${API}/api/agents/${agent.id}`, { method: 'DELETE' })}
+              onClick={() => authFetch(`${API}/api/agents/${agent.id}`, { method: 'DELETE' })}
               style={{
                 background: 'rgba(255,59,59,0.08)',
                 border: '1px solid rgba(255,59,59,0.3)',
