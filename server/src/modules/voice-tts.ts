@@ -14,7 +14,8 @@ import { log } from '../core/logger.js';
 const JARVIS_VOICE = 'bm_george';   // British male, formal — Jarvis's voice
 const KOKORO_MODEL_ID = 'onnx-community/Kokoro-82M-v1.0-ONNX';
 
-let _kokoro: { generate: (text: string, opts: { voice: string; speed?: number }) => Promise<{ audio: Float32Array; sampling_rate: number }> } | null = null;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let _kokoro: any = null;
 let _kokoroLoading: Promise<void> | null = null;
 let _kokoroFailed = false;
 
@@ -51,19 +52,19 @@ export interface TTSResult {
  * Generate WAV audio for the given text.
  * Returns null only on hard failure.
  */
-export async function synthesizeToBuffer(text: string): Promise<TTSResult | null> {
+export async function synthesizeToBuffer(text: string, opts: { speed?: number } = {}): Promise<TTSResult | null> {
   const start = Date.now();
   const clean = sanitize(text);
   if (!clean) return null;
+  const speed = opts.speed ?? 1.15;
 
-  // Wait for Kokoro to finish loading if currently loading
   if (_kokoroLoading && !_kokoro && !_kokoroFailed) {
     await _kokoroLoading;
   }
 
   if (_kokoro) {
     try {
-      const result = await _kokoro.generate(clean, { voice: JARVIS_VOICE, speed: 1.0 });
+      const result = await _kokoro.generate(clean, { voice: JARVIS_VOICE, speed });
       const wav = floatToWav(result.audio, result.sampling_rate);
       return {
         audioBuffer: wav,

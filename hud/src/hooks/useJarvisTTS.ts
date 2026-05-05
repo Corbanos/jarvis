@@ -3,6 +3,7 @@ import { useEffect, useRef } from 'react';
 import { useJarvisStore } from '@/lib/store';
 import { stripCards } from '@/components/JarvisCards/parser';
 import { attachTTSElement } from '@/lib/audio-level';
+import { useVoiceConfig } from '@/lib/voice-config';
 
 const API = process.env['NEXT_PUBLIC_JARVIS_API'] ?? 'http://localhost:7777';
 
@@ -12,6 +13,8 @@ const API = process.env['NEXT_PUBLIC_JARVIS_API'] ?? 'http://localhost:7777';
  */
 export function useJarvisTTS() {
   const messages = useJarvisStore((s) => s.messages);
+  const ttsEnabled = useVoiceConfig((s) => s.ttsEnabled);
+  const ttsSpeed = useVoiceConfig((s) => s.ttsSpeed);
   const lastSpokenRef = useRef<string>('');
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
@@ -20,6 +23,8 @@ export function useJarvisTTS() {
     if (!last || last.role !== 'assistant') return;
     if (last.id === lastSpokenRef.current) return;
     lastSpokenRef.current = last.id;
+
+    if (!ttsEnabled) return;
 
     const speakable = stripCards(last.text).trim();
     if (!speakable || speakable.length < 2 || speakable.length > 1500) return;
@@ -33,7 +38,7 @@ export function useJarvisTTS() {
     fetch(`${API}/api/voice/synthesize`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text: speakable }),
+      body: JSON.stringify({ text: speakable, speed: ttsSpeed }),
     })
       .then(async (res) => {
         if (aborted || !res.ok) return;
@@ -60,5 +65,5 @@ export function useJarvisTTS() {
       .catch((e) => console.warn('[TTS] fetch failed:', e));
 
     return () => { aborted = true; };
-  }, [messages]);
+  }, [messages, ttsEnabled, ttsSpeed]);
 }

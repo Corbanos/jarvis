@@ -5,6 +5,7 @@ import { useJarvisChat } from '@/hooks/useJarvisChat';
 import { useWakeWord, type WakeState } from '@/hooks/useWakeWord';
 import { useJarvisTTS } from '@/hooks/useJarvisTTS';
 import { JarvisRichResponse } from '@/components/JarvisCards';
+import { SettingsButton } from '@/components/SettingsPanel';
 
 export function JarvisChat() {
   const messages = useJarvisStore((s) => s.messages);
@@ -177,10 +178,10 @@ export function JarvisChat() {
 
 function WakeStatusBar({ state, lastTranscript, loading }: { state: WakeState; lastTranscript: string; loading: boolean }) {
   const stateConfig: Record<WakeState, { label: string; color: string; pulse: boolean }> = {
-    idle: { label: 'VOICE STANDBY', color: 'var(--text-dim)', pulse: false },
-    listening: { label: 'LISTENING FOR "HEY JARVIS"', color: 'var(--accent-green)', pulse: true },
-    recording: { label: 'RECORDING COMMAND', color: 'var(--accent-amber)', pulse: true },
-    processing: { label: 'PROCESSING VOICE', color: 'var(--accent-primary)', pulse: true },
+    asleep: { label: 'ASLEEP · SAY WAKE WORD', color: 'var(--text-dim)', pulse: false },
+    awake: { label: 'AWAKE · LISTENING', color: 'var(--accent-green)', pulse: true },
+    recording: { label: 'RECORDING', color: 'var(--accent-amber)', pulse: true },
+    processing: { label: 'PROCESSING', color: 'var(--accent-primary)', pulse: true },
   };
 
   const cfg = loading
@@ -197,7 +198,7 @@ function WakeStatusBar({ state, lastTranscript, loading }: { state: WakeState; l
       background: 'rgba(0,4,12,0.6)',
       flexShrink: 0,
     }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 7, flex: 1 }}>
         {/* Animated dot */}
         <div style={{
           width: 6,
@@ -218,7 +219,7 @@ function WakeStatusBar({ state, lastTranscript, loading }: { state: WakeState; l
         </span>
 
         {/* Voice waveform bars when recording */}
-        {(state === 'recording' || state === 'listening') && (
+        {(state === 'recording' || state === 'awake') && (
           <div style={{ display: 'flex', gap: 2, alignItems: 'center', marginLeft: 4 }}>
             {[...Array(8)].map((_, i) => (
               <div
@@ -240,10 +241,11 @@ function WakeStatusBar({ state, lastTranscript, loading }: { state: WakeState; l
 
       {/* Last transcript preview */}
       {lastTranscript && (
-        <span style={{ fontSize: 8, color: 'var(--text-dim)', letterSpacing: '0.05em', maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        <span style={{ fontSize: 8, color: 'var(--text-dim)', letterSpacing: '0.05em', maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           "{lastTranscript}"
         </span>
       )}
+      <SettingsButton />
     </div>
   );
 }

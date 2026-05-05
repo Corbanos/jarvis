@@ -23,13 +23,13 @@ export async function voiceRoutes(app: FastifyInstance) {
 
   // TTS — synthesize audio and stream back to browser
   app.post('/api/voice/synthesize', async (request, reply) => {
-    const body = request.body as { text: string };
+    const body = request.body as { text: string; speed?: number };
     if (!body.text) return reply.status(400).send({ error: 'text required' });
 
     const info = await getVoiceInfo();
-    log.tts(body.text, info.method);
+    log.tts(body.text, `${info.method} @ ${(body.speed ?? 1.15).toFixed(2)}x`);
 
-    const result = await synthesizeToBuffer(body.text);
+    const result = await synthesizeToBuffer(body.text, { speed: body.speed });
     if (!result?.audioBuffer) {
       log.error('TTS', 'synthesis returned no audio');
       return reply.status(500).send({ error: 'synthesis failed' });
