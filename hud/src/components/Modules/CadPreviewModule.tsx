@@ -1,7 +1,18 @@
 'use client';
 import { useState } from 'react';
+import dynamic from 'next/dynamic';
 import { useJarvisStore } from '@/lib/store';
 import { type ModuleInstance } from '@/lib/workspace';
+
+// 3D viewer is client-only (uses WebGL); load lazily so it doesn't bloat initial bundle
+const STLViewer = dynamic(() => import('./STLViewer').then((m) => m.STLViewer), {
+  ssr: false,
+  loading: () => (
+    <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-dim)', fontSize: 10, letterSpacing: '0.2em' }}>
+      LOADING 3D VIEWER…
+    </div>
+  ),
+});
 
 const API = process.env['NEXT_PUBLIC_JARVIS_API'] ?? 'http://localhost:7777';
 
@@ -62,19 +73,25 @@ function CadPreviewView({ data }: { data: CadData }) {
         overflow: 'hidden',
       }}>
         {/* Reticle decorations */}
-        <div style={{ position: 'absolute', top: 8, left: 10, fontSize: 8, color: 'var(--accent-primary)', letterSpacing: '0.2em', opacity: 0.7 }}>VIEW · OBLIQUE</div>
-        <div style={{ position: 'absolute', top: 8, right: 10, fontSize: 8, color: 'var(--accent-amber)', letterSpacing: '0.2em' }}>RENDER · {duration}</div>
-        <div style={{ position: 'absolute', bottom: 8, left: 10, fontSize: 8, color: 'var(--text-dim)', letterSpacing: '0.2em' }}>↑Z  →X  ↗Y</div>
-        <div style={{ position: 'absolute', bottom: 8, right: 10, fontSize: 8, color: 'var(--accent-green)', letterSpacing: '0.2em' }}>● READY</div>
+        <div style={{ position: 'absolute', top: 8, left: 10, fontSize: 8, color: 'var(--accent-primary)', letterSpacing: '0.2em', opacity: 0.8, zIndex: 5 }}>{data.stlUrl ? 'INTERACTIVE 3D · DRAG TO ROTATE' : 'VIEW · OBLIQUE'}</div>
+        <div style={{ position: 'absolute', top: 8, right: 10, fontSize: 8, color: 'var(--accent-amber)', letterSpacing: '0.2em', zIndex: 5 }}>RENDER · {duration}</div>
+        <div style={{ position: 'absolute', bottom: 8, left: 10, fontSize: 8, color: 'var(--text-dim)', letterSpacing: '0.2em', zIndex: 5 }}>SCROLL · ZOOM   ·   RIGHT-DRAG · PAN</div>
+        <div style={{ position: 'absolute', bottom: 8, right: 10, fontSize: 8, color: 'var(--accent-green)', letterSpacing: '0.2em', zIndex: 5 }}>● READY</div>
 
-        {/* Crosshair */}
-        <div style={{ position: 'absolute', top: '50%', left: '50%', width: 80, height: 80, transform: 'translate(-50%, -50%)', pointerEvents: 'none', opacity: 0.15 }}>
-          <div style={{ position: 'absolute', top: '50%', left: 0, right: 0, height: 1, background: 'var(--accent-primary)' }} />
-          <div style={{ position: 'absolute', left: '50%', top: 0, bottom: 0, width: 1, background: 'var(--accent-primary)' }} />
-          <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', width: 18, height: 18, border: '1px solid var(--accent-primary)', borderRadius: '50%' }} />
-        </div>
+        {/* Crosshair (only when no STL viewer) */}
+        {!data.stlUrl && (
+          <div style={{ position: 'absolute', top: '50%', left: '50%', width: 80, height: 80, transform: 'translate(-50%, -50%)', pointerEvents: 'none', opacity: 0.15 }}>
+            <div style={{ position: 'absolute', top: '50%', left: 0, right: 0, height: 1, background: 'var(--accent-primary)' }} />
+            <div style={{ position: 'absolute', left: '50%', top: 0, bottom: 0, width: 1, background: 'var(--accent-primary)' }} />
+            <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', width: 18, height: 18, border: '1px solid var(--accent-primary)', borderRadius: '50%' }} />
+          </div>
+        )}
 
-        {!imgError ? (
+        {data.stlUrl ? (
+          <div style={{ position: 'absolute', inset: 0 }}>
+            <STLViewer url={`${API}${data.stlUrl}`} />
+          </div>
+        ) : !imgError ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img
             src={`${API}${data.pngUrl}`}
