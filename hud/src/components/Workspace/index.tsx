@@ -13,6 +13,9 @@ import { CadPreviewModule } from '@/components/Modules/CadPreviewModule';
 import { WeatherModule } from '@/components/Modules/WeatherModule';
 import { ShellModule } from '@/components/Modules/ShellModule';
 import { WorldviewModule } from '@/components/Modules/WorldviewModule';
+import { ProjectsModule } from '@/components/Modules/ProjectsModule';
+import { LibraryModule } from '@/components/Modules/LibraryModule';
+import { AppRunnerModule } from '@/components/Modules/AppRunnerModule';
 import { useJarvisStore } from '@/lib/store';
 
 export { Dock } from './Dock';
@@ -38,6 +41,9 @@ const REGISTRY: Record<string, ModuleConfig> = {
   shell:           { title: 'SHELL',               accent: '#ff8c00', Component: () => <ShellModule /> },
   'cad-preview':   { title: 'CAD PREVIEW',         accent: '#00e5ff', Component: ({ module }) => <CadPreviewModule module={module} /> },
   weather:         { title: 'ATMOSPHERIC',         accent: '#00e5ff', Component: ({ module }) => <WeatherModule module={module} /> },
+  projects:        { title: 'PROJECTS',            accent: '#00e5ff', Component: () => <ProjectsModule /> },
+  library:         { title: 'LIBRARY',             accent: '#00e5ff', Component: () => <LibraryModule /> },
+  app:             { title: 'APP',                 accent: '#00e5ff', Component: ({ module }) => <AppRunnerModule module={module} /> },
 };
 
 export function Workspace() {

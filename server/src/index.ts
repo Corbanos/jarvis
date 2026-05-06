@@ -17,6 +17,7 @@ import { worldviewTool, setWorldviewBroadcast } from './tools/worldview.js';
 import { cadTool, setCadBroadcast, setCadModuleBroadcast } from './tools/cad.js';
 import { printerTool, setPrinterBroadcast, setPrinterModuleBroadcast } from './tools/printer.js';
 import { moduleTool, setModuleBroadcast } from './tools/module.js';
+import { projectsTool, setProjectsBroadcast } from './tools/projects.js';
 import { cadRoutes } from './routes/cad.js';
 import { shellRoutes } from './routes/shell.js';
 import { chatRoutes } from './routes/chat.js';
@@ -27,6 +28,7 @@ import { jobRoutes } from './routes/jobs.js';
 import { setupRoutes, loadConfig, applyApiKey } from './routes/setup.js';
 import { authRoutes } from './routes/auth.js';
 import { locationRoutes } from './routes/location.js';
+import { projectsRoutes } from './routes/projects.js';
 import { registerAuth, getAccessToken } from './core/auth.js';
 import { initScheduler } from './modules/scheduler.js';
 import { checkAvailable as checkComputerUse } from './modules/computer-use.js';
@@ -75,6 +77,7 @@ async function main() {
   toolRegistry.register(printerTool);
   toolRegistry.register(worldviewTool);
   toolRegistry.register(moduleTool);
+  toolRegistry.register(projectsTool);
 
   // ── Wire tool broadcasts to the WS hub ─────────────────────────────
   // Tools that pop a HUD card or module emit through these helpers.
@@ -94,6 +97,7 @@ async function main() {
   setCadModuleBroadcast(broadcastModule);
   setPrinterBroadcast(broadcastCard);
   setPrinterModuleBroadcast(broadcastModule);
+  setProjectsBroadcast(broadcastModule);
 
   toolRegistry.register(dismissTool);
   setDismissHandler(() => {
@@ -132,6 +136,7 @@ async function main() {
   await app.register(cadRoutes);
   await app.register(shellRoutes);
   await app.register(locationRoutes);
+  await app.register(projectsRoutes);
 
   app.get('/api/health', async () => ({
     status: 'OPERATIONAL', system: 'J.A.R.V.I.S.', version: '2.0.0',

@@ -14,6 +14,8 @@ const DOCK_ENTRIES: DockEntry[] = [
   { type: 'agents',        label: 'AGENTS',     icon: '◇',   description: 'Active sub-agents (compact)' },
   { type: 'agent-control', label: 'CONTROL',    icon: '⎔',   description: 'Agent Control Panel' },
   { type: 'scheduler',     label: 'SCHEDULE',   icon: '◷',   description: 'Scheduled tasks' },
+  { type: 'projects',      label: 'PROJECTS',   icon: '◆',   description: 'Multi-session work + sign-off' },
+  { type: 'library',       label: 'LIBRARY',    icon: '▦',   description: 'Apps Jarvis built for you' },
   { type: 'cad',           label: 'CAD',        icon: '◈',   description: 'CAD library' },
   { type: 'printer',       label: 'PRINTER',    icon: '⎙',   description: 'Bambu printer' },
   { type: 'worldview',     label: 'WORLDVIEW',  icon: '⊕',   description: 'Globe + OSINT' },
