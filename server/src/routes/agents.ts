@@ -18,9 +18,9 @@ export async function agentRoutes(app: FastifyInstance) {
 
   // Spawn a new agent
   app.post('/api/agents', async (request, reply) => {
-    const body = request.body as { goal: string };
+    const body = request.body as { goal: string; projectId?: string; parentAgentId?: string; role?: string };
     if (!body.goal) return reply.status(400).send({ error: 'goal required' });
-    const agent = app.agentPool.spawn(body.goal);
+    const agent = app.agentPool.spawn(body.goal, { projectId: body.projectId, parentAgentId: body.parentAgentId, role: body.role });
     return reply.status(201).send(agent);
   });
 

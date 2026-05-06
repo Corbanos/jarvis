@@ -25,6 +25,9 @@ export interface AgentRecord {
   currentTool?: string;
   summary?: string;
   model?: string;
+  projectId?: string;
+  parentAgentId?: string;
+  role?: string;
 }
 
 export interface TelemetryRecord {

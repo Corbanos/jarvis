@@ -1,6 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { v4 as uuid } from 'uuid';
 import { memory } from './memory.js';
+import { getActiveProjectId } from './active-project.js';
 import { toolRegistry } from './tool-registry.js';
 import { log } from './logger.js';
 import type { AgentRecord } from '../types/index.js';
@@ -71,6 +72,10 @@ export function createAgentPool(ws: WSHub) {
           completedAt: row['completed_at'] as number | undefined,
           logs: row['logs'] as string[],
           model: row['model'] as string | undefined,
+          projectId: (row['project_id'] as string | undefined) ?? undefined,
+          parentAgentId: (row['parent_agent_id'] as string | undefined) ?? undefined,
+          role: (row['role'] as string | undefined) ?? undefined,
+          summary: (row['summary'] as string | undefined) ?? undefined,
         };
         pool.set(agent.id, agent);
       }
@@ -211,8 +216,10 @@ export function createAgentPool(ws: WSHub) {
   }
 
   return {
-    spawn(goal: string, _env?: Record<string, string>): AgentRecord {
+    spawn(goal: string, opts?: { projectId?: string; parentAgentId?: string; role?: string }): AgentRecord {
       const id = uuid();
+      // Auto-link to active project if caller didn't specify.
+      const projectId = opts?.projectId ?? getActiveProjectId() ?? undefined;
       const agent: InternalAgent = {
         id,
         goal,
@@ -220,11 +227,14 @@ export function createAgentPool(ws: WSHub) {
         startedAt: Date.now(),
         logs: [],
         model: currentModel,
+        projectId,
+        parentAgentId: opts?.parentAgentId,
+        role: opts?.role,
       };
 
       pool.set(id, agent);
-      memory.saveAgent({ ...agent, model: currentModel });
-      broadcast('agent_spawn', { id, goal, status: 'running', model: currentModel });
+      memory.saveAgent({ ...agent });
+      broadcast('agent_spawn', { id, goal, status: 'running', model: currentModel, projectId, parentAgentId: opts?.parentAgentId, role: opts?.role });
 
       // Fire-and-forget: don't await
       runAgent(agent).catch((err) => log.error('Agent', String(err)));

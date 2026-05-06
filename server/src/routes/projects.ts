@@ -146,14 +146,17 @@ export async function projectsRoutes(app: FastifyInstance) {
     return reply.send(readFileSync(full));
   });
 
-  // Convenience: /library/:slug/ → /library/:slug/index.html
-  app.get('/library/:slug/', async (request, reply) => {
+  // Convenience: /library/:slug or /library/:slug/ → /library/:slug/index.html
+  const serveAppIndex = async (request: any, reply: any) => {
     const { slug } = request.params as { slug: string };
     const m = readManifest(slug);
     const entry = m?.entry ?? 'index.html';
     const full = join(appDir(slug), entry);
     if (!existsSync(full)) return reply.status(404).send('app not built yet');
     reply.header('Content-Type', 'text/html; charset=utf-8');
+    reply.header('Cache-Control', 'no-cache');
     return reply.send(readFileSync(full));
-  });
+  };
+  app.get('/library/:slug/', serveAppIndex);
+  app.get('/library/:slug', serveAppIndex);
 }

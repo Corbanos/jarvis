@@ -18,6 +18,8 @@ export function AgentControlPanel() {
   const [view, setView] = useState<'active' | 'history'>('active');
 
   // Load agents and model info on mount
+  const [projectMap, setProjectMap] = useState<Map<string, ProjectMini>>(new Map());
+
   useEffect(() => {
     authFetch(`${API}/api/agents`)
       .then((r) => r.json())
@@ -28,12 +30,30 @@ export function AgentControlPanel() {
       })
       .catch(() => {});
 
+    const loadProjects = () => authFetch(`${API}/api/projects`)
+      .then((r) => r.json())
+      .then((j: { projects: Array<ProjectMini> }) => {
+        const m = new Map<string, ProjectMini>();
+        for (const p of (j.projects ?? [])) m.set(p.id, p);
+        setProjectMap(m);
+      })
+      .catch(() => {});
+    loadProjects();
+    const onProjectsEvent = () => loadProjects();
+    window.addEventListener('jarvis-projects-event', onProjectsEvent);
+    const t = setInterval(loadProjects, 8000);
+
     authFetch(`${API}/api/model`)
       .then((r) => r.json())
       .then((data: { current: string; available: string[] }) => {
         if (data.current) setCurrentModel(data.current);
       })
       .catch(() => {});
+
+    return () => {
+      clearInterval(t);
+      window.removeEventListener('jarvis-projects-event', onProjectsEvent);
+    };
   }, [setAgents, setCurrentModel]);
 
   const activeAgents = agents.filter((a) => a.status === 'running');
@@ -147,15 +167,13 @@ export function AgentControlPanel() {
             activeAgents.length === 0 ? (
               <EmptyState message="NO ACTIVE AGENTS" />
             ) : (
-              activeAgents.map((agent) => (
-                <AgentListItem
-                  key={agent.id}
-                  agent={agent}
-                  focused={agent.id === focusedAgentId}
-                  onClick={() => setFocusedAgent(agent.id === focusedAgentId ? null : agent.id)}
-                  compact={!!focusedAgent}
-                />
-              ))
+              <GroupedAgents
+                agents={activeAgents}
+                projectMap={projectMap}
+                focusedAgentId={focusedAgentId}
+                setFocusedAgent={setFocusedAgent}
+                compact={!!focusedAgent}
+              />
             )
           ) : (
             <>
@@ -163,15 +181,13 @@ export function AgentControlPanel() {
                 <EmptyState message="NO AGENT HISTORY" />
               ) : (
                 <>
-                  {historicalAgents.slice(0, 50).map((agent) => (
-                    <AgentListItem
-                      key={agent.id}
-                      agent={agent}
-                      focused={agent.id === focusedAgentId}
-                      onClick={() => setFocusedAgent(agent.id === focusedAgentId ? null : agent.id)}
-                      compact={!!focusedAgent}
-                    />
-                  ))}
+                  <GroupedAgents
+                    agents={historicalAgents.slice(0, 80)}
+                    projectMap={projectMap}
+                    focusedAgentId={focusedAgentId}
+                    setFocusedAgent={setFocusedAgent}
+                    compact={!!focusedAgent}
+                  />
                   {historicalAgents.length > 0 && (
                     <button
                       onClick={handleClearHistory}
@@ -206,6 +222,97 @@ export function AgentControlPanel() {
           />
         )}
       </div>
+    </div>
+  );
+}
+
+
+// ─── Project-grouped folder view ───────────────────────────────────────────
+
+interface ProjectMini { id: string; name: string; slug: string; status: string; }
+
+function GroupedAgents({
+  agents, projectMap, focusedAgentId, setFocusedAgent, compact,
+}: {
+  agents: AgentRecord[];
+  projectMap: Map<string, ProjectMini>;
+  focusedAgentId: string | null;
+  setFocusedAgent: (id: string | null) => void;
+  compact: boolean;
+}) {
+  // Bucket: projectId → agents[]. Unassigned go in '__none'.
+  const buckets = new Map<string, AgentRecord[]>();
+  for (const a of agents) {
+    const key = a.projectId ?? '__none';
+    if (!buckets.has(key)) buckets.set(key, []);
+    buckets.get(key)!.push(a);
+  }
+  // Sort: assigned projects first (by name), unassigned last.
+  const keys = Array.from(buckets.keys()).sort((a, b) => {
+    if (a === '__none') return 1;
+    if (b === '__none') return -1;
+    const an = projectMap.get(a)?.name ?? a;
+    const bn = projectMap.get(b)?.name ?? b;
+    return an.localeCompare(bn);
+  });
+  return (
+    <>
+      {keys.map((key) => (
+        <ProjectFolder
+          key={key}
+          label={key === '__none' ? 'UNASSIGNED' : (projectMap.get(key)?.name?.toUpperCase() ?? 'UNKNOWN PROJECT')}
+          status={key === '__none' ? undefined : projectMap.get(key)?.status}
+          agents={buckets.get(key)!}
+          focusedAgentId={focusedAgentId}
+          setFocusedAgent={setFocusedAgent}
+          compact={compact}
+        />
+      ))}
+    </>
+  );
+}
+
+function ProjectFolder({
+  label, status, agents, focusedAgentId, setFocusedAgent, compact,
+}: {
+  label: string;
+  status?: string;
+  agents: AgentRecord[];
+  focusedAgentId: string | null;
+  setFocusedAgent: (id: string | null) => void;
+  compact: boolean;
+}) {
+  const [open, setOpen] = useState(true);
+  const accent = status === 'active' ? '#00e5ff' : status === 'signed_off' ? '#00ff9d' : '#888';
+  return (
+    <div>
+      <div
+        onClick={() => setOpen((v) => !v)}
+        style={{
+          padding: '6px 12px',
+          background: 'rgba(0,229,255,0.04)',
+          borderTop: '1px solid rgba(0,229,255,0.08)',
+          borderBottom: '1px solid rgba(0,229,255,0.08)',
+          display: 'flex', alignItems: 'center', gap: 8,
+          cursor: 'pointer',
+          fontSize: 8, letterSpacing: '0.2em',
+          color: 'var(--accent-bright)', fontWeight: 700,
+        }}
+      >
+        <span style={{ fontSize: 9, color: 'var(--accent-primary)' }}>{open ? '▾' : '▸'}</span>
+        <span style={{ width: 6, height: 6, borderRadius: '50%', background: accent, boxShadow: `0 0 4px ${accent}` }} />
+        <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{label}</span>
+        <span style={{ fontSize: 7, color: 'var(--text-dim)' }}>{agents.length}</span>
+      </div>
+      {open && agents.map((agent) => (
+        <AgentListItem
+          key={agent.id}
+          agent={agent}
+          focused={agent.id === focusedAgentId}
+          onClick={() => setFocusedAgent(agent.id === focusedAgentId ? null : agent.id)}
+          compact={compact}
+        />
+      ))}
     </div>
   );
 }

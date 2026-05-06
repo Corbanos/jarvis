@@ -92,7 +92,7 @@ export function AppRunnerModule({ module }: { module: ModuleInstance }) {
       <iframe
         key={iframeKey}
         ref={iframeRef}
-        src={`${API}/library/${slug}/`}
+        src={`/library/${slug}/`}
         title={manifest?.name ?? slug}
         style={{ flex: 1, border: 'none', background: '#000' }}
         sandbox="allow-scripts allow-same-origin allow-popups allow-forms"

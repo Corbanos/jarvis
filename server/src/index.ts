@@ -107,7 +107,7 @@ async function main() {
 
   const agentPool = createAgentPool(ws);
   app.decorate('agentPool', agentPool);
-  setSpawnFn((goal) => agentPool.spawn(goal));
+  setSpawnFn((goal, opts) => agentPool.spawn(goal, opts));
 
   const jarvis = createJarvis(ws);
   app.decorate('jarvis', jarvis);

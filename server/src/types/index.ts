@@ -37,6 +37,10 @@ export interface AgentRecord {
   logs: string[];
   pid?: number;
   model?: string;
+  projectId?: string;       // Link to a project, if any
+  parentAgentId?: string;   // For multi-agent / manager-worker setups
+  role?: string;            // e.g. 'manager', 'worker', 'debug', 'builder'
+  summary?: string;         // Short one-line summary saved on completion
 }
 
 export interface ToolDefinition {

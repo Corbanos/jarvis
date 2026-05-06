@@ -49,11 +49,15 @@ db.exec(`
   );
 `);
 
-// Migration: add model column if it doesn't exist
-try {
-  db.exec(`ALTER TABLE agents ADD COLUMN model TEXT`);
-} catch {
-  // Column already exists
+// Migrations — non-fatal if columns already exist.
+for (const stmt of [
+  `ALTER TABLE agents ADD COLUMN model TEXT`,
+  `ALTER TABLE agents ADD COLUMN project_id TEXT`,
+  `ALTER TABLE agents ADD COLUMN parent_agent_id TEXT`,
+  `ALTER TABLE agents ADD COLUMN role TEXT`,
+  `ALTER TABLE agents ADD COLUMN summary TEXT`,
+]) {
+  try { db.exec(stmt); } catch { /* column already exists */ }
 }
 
 export const memory = {
@@ -90,10 +94,14 @@ export const memory = {
     logs: string[];
     pid?: number;
     model?: string;
+    projectId?: string;
+    parentAgentId?: string;
+    role?: string;
+    summary?: string;
   }) {
     db.prepare(
-      `INSERT OR REPLACE INTO agents (id, goal, status, started_at, completed_at, logs, pid, model)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT OR REPLACE INTO agents (id, goal, status, started_at, completed_at, logs, pid, model, project_id, parent_agent_id, role, summary)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       agent.id,
       agent.goal,
@@ -102,7 +110,11 @@ export const memory = {
       agent.completedAt ?? null,
       JSON.stringify(agent.logs),
       agent.pid ?? null,
-      agent.model ?? null
+      agent.model ?? null,
+      agent.projectId ?? null,
+      agent.parentAgentId ?? null,
+      agent.role ?? null,
+      agent.summary ?? null
     );
   },
 
