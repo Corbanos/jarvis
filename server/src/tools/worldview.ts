@@ -65,9 +65,16 @@ async function ipLocate(): Promise<{ lat: number; lon: number; name: string }> {
 
 // Run one Overpass query, parse, return ranked pins. Each query targets
 // exactly ONE tag — keeps Overpass under its query budget.
-async function runOverpass(query: string, lat: number, lon: number, radiusM: number, limit: number): Promise<Array<Pin & { dist: number }>> {
+const OVERPASS_ENDPOINTS = [
+  'https://overpass-api.de/api/interpreter',
+  'https://overpass.kumi.systems/api/interpreter',
+  'https://overpass.openstreetmap.fr/api/interpreter',
+  'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
+];
+
+async function fetchOverpass(ep: string, query: string): Promise<Array<{ lat: number; lon: number; tags: Record<string,string> }>> {
   try {
-    const r = await fetch('https://overpass-api.de/api/interpreter', {
+    const r = await fetch(ep, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
@@ -75,33 +82,60 @@ async function runOverpass(query: string, lat: number, lon: number, radiusM: num
         'User-Agent': 'jarvis-hud/1.0 (+overpass)',
       },
       body: 'data=' + encodeURIComponent(query),
-      signal: AbortSignal.timeout(20000),
+      signal: AbortSignal.timeout(7000),
     });
     if (!r.ok) return [];
     const text = await r.text();
+    if (!text.trim().startsWith('{')) return [];
     if (text.includes('Query timed out')) return [];
-    const j = JSON.parse(text) as { elements: Array<{ type: string; lat?: number; lon?: number; center?: { lat: number; lon: number }; tags?: Record<string, string> }> };
-    const out: Array<Pin & { dist: number }> = [];
+    const j = JSON.parse(text) as { elements: Array<{ lat?: number; lon?: number; center?: { lat: number; lon: number }; tags?: Record<string, string> }> };
+    const out: Array<{ lat: number; lon: number; tags: Record<string,string> }> = [];
     for (const el of (j.elements || [])) {
       const eLat = el.lat ?? el.center?.lat;
       const eLon = el.lon ?? el.center?.lon;
       if (typeof eLat !== 'number' || typeof eLon !== 'number') continue;
-      const tags = el.tags || {};
-      const name = tags['name'] || tags['brand'] || tags['amenity'] || tags['shop'] || 'Unnamed';
-      const sub = [
-        tags['addr:housenumber'] && tags['addr:street']
-          ? `${tags['addr:housenumber']} ${tags['addr:street']}`
-          : tags['addr:street'] || '',
-        tags['addr:city'] || '',
-      ].filter(Boolean).join(', ') || tags['opening_hours'] || '';
-      out.push({
-        lat: eLat, lon: eLon, label: name, sub,
-        tag: 'amber' as const,
-        dist: haversine({ lat, lon }, { lat: eLat, lon: eLon }),
-      });
+      out.push({ lat: eLat, lon: eLon, tags: el.tags || {} });
     }
-    return out.sort((a, b) => a.dist - b.dist).slice(0, limit);
-  } catch { return []; }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
+async function runOverpass(query: string, lat: number, lon: number, _radiusM: number, limit: number): Promise<Array<Pin & { dist: number }>> {
+  // Hit all mirrors in parallel and merge results. Different mirrors run on
+  // different OSM snapshots / have different rate-limit windows; the union
+  // gives us the most complete dataset and beats single-mirror flakiness.
+  const settled = await Promise.allSettled(OVERPASS_ENDPOINTS.map((ep) => fetchOverpass(ep, query)));
+  const merged = new Map<string, { lat: number; lon: number; tags: Record<string,string> }>();
+  for (const r of settled) {
+    if (r.status !== 'fulfilled') continue;
+    for (const el of r.value) {
+      const key = `${el.lat.toFixed(5)},${el.lon.toFixed(5)}`;
+      // First seen wins — but if a later mirror has a richer tag set, prefer it.
+      const prev = merged.get(key);
+      if (!prev || Object.keys(el.tags).length > Object.keys(prev.tags).length) {
+        merged.set(key, el);
+      }
+    }
+  }
+  const out: Array<Pin & { dist: number }> = [];
+  for (const el of merged.values()) {
+    const tags = el.tags;
+    const name = tags['name'] || tags['brand'] || tags['amenity'] || tags['shop'] || 'Unnamed';
+    const sub = [
+      tags['addr:housenumber'] && tags['addr:street']
+        ? `${tags['addr:housenumber']} ${tags['addr:street']}`
+        : tags['addr:street'] || '',
+      tags['addr:city'] || '',
+    ].filter(Boolean).join(', ') || tags['opening_hours'] || '';
+    out.push({
+      lat: el.lat, lon: el.lon, label: name, sub,
+      tag: 'amber' as const,
+      dist: haversine({ lat, lon }, { lat: el.lat, lon: el.lon }),
+    });
+  }
+  return out.sort((a, b) => a.dist - b.dist).slice(0, limit);
 }
 
 // Common amenity-like terms (the user's query, lowercased) → OSM amenity tag.
@@ -136,20 +170,20 @@ async function nearbySearch(lat: number, lon: number, query: string, radiusM: nu
   const tries: string[] = [];
 
   // 1) brand match (fastest for chains: 7-Eleven, Starbucks, McDonald's, etc.)
-  tries.push(`[out:json][timeout:10];(node["brand"~"${escaped}",i](around:${radiusM},${lat},${lon});way["brand"~"${escaped}",i](around:${radiusM},${lat},${lon}););out center ${limit * 3};`);
+  tries.push(`[out:json][timeout:10];(node["brand"~"${escaped}",i](around:${radiusM},${lat},${lon});way["brand"~"${escaped}",i](around:${radiusM},${lat},${lon}););out center 200;`);
   // 2) name match
-  tries.push(`[out:json][timeout:10];(node["name"~"${escaped}",i](around:${radiusM},${lat},${lon});way["name"~"${escaped}",i](around:${radiusM},${lat},${lon}););out center ${limit * 3};`);
+  tries.push(`[out:json][timeout:10];(node["name"~"${escaped}",i](around:${radiusM},${lat},${lon});way["name"~"${escaped}",i](around:${radiusM},${lat},${lon}););out center 200;`);
   // 3) amenity / shop semantic match (when query is a category like "coffee", "gas station")
   if (AMENITY_MAP[qLower]) {
     const a = AMENITY_MAP[qLower];
-    tries.push(`[out:json][timeout:10];(node["amenity"="${a}"](around:${radiusM},${lat},${lon});way["amenity"="${a}"](around:${radiusM},${lat},${lon}););out center ${limit * 3};`);
+    tries.push(`[out:json][timeout:10];(node["amenity"="${a}"](around:${radiusM},${lat},${lon});way["amenity"="${a}"](around:${radiusM},${lat},${lon}););out center 200;`);
   }
   if (SHOP_MAP[qLower]) {
     const sh = SHOP_MAP[qLower];
-    tries.push(`[out:json][timeout:10];(node["shop"="${sh}"](around:${radiusM},${lat},${lon});way["shop"="${sh}"](around:${radiusM},${lat},${lon}););out center ${limit * 3};`);
+    tries.push(`[out:json][timeout:10];(node["shop"="${sh}"](around:${radiusM},${lat},${lon});way["shop"="${sh}"](around:${radiusM},${lat},${lon}););out center 200;`);
   }
   // 4) generic shop/amenity regex (catch-all)
-  tries.push(`[out:json][timeout:10];(node["amenity"~"${escaped}",i](around:${radiusM},${lat},${lon});node["shop"~"${escaped}",i](around:${radiusM},${lat},${lon}););out center ${limit * 3};`);
+  tries.push(`[out:json][timeout:10];(node["amenity"~"${escaped}",i](around:${radiusM},${lat},${lon});node["shop"~"${escaped}",i](around:${radiusM},${lat},${lon}););out center 200;`);
 
   // Aggregate across tries; first one with results wins, but also merge if
   // brand + name both produce hits (different chain locations).
@@ -165,7 +199,21 @@ async function nearbySearch(lat: number, lon: number, query: string, radiusM: nu
     }
     if (all.length >= limit) break;
   }
-  return all.sort((a, b) => a.dist - b.dist).slice(0, limit);
+  // Final ranking: distance first, but break near-ties (within 50 m) by
+  // preferring entries that have a real street address — those are the
+  // confirmed/curated storefronts; bare 'Subway' nodes without an address
+  // are often imprecise placeholders.
+  return all
+    .sort((a, b) => {
+      const close = Math.abs(a.dist - b.dist) < 50;
+      if (close) {
+        const aAddr = a.sub && /\d/.test(a.sub) ? 1 : 0;
+        const bAddr = b.sub && /\d/.test(b.sub) ? 1 : 0;
+        if (aAddr !== bAddr) return bAddr - aAddr;
+      }
+      return a.dist - b.dist;
+    })
+    .slice(0, limit);
 }
 
 function haversine(a: { lat: number; lon: number }, b: { lat: number; lon: number }): number {
@@ -213,9 +261,17 @@ Tactical examples:
   • "show me planes over Tokyo" → action='focus' location='Tokyo' + action='layer' name='flights' enable=true.
   • "fly me to the Eiffel Tower" → action='focus' location='Eiffel Tower' alt=2000.
 
-After calling 'nearby' you receive a numbered list with distances. Use
-that to write a short prose answer that REFERENCES the pins on screen
-("Closest is the College Street one, 0.8 km southwest, sir.").`,
+After calling 'nearby' you receive a numbered list with distances.
+Write a SHORT prose answer (one or two sentences) referencing the pin
+on screen — e.g. "Closest is the College Street one, 0.8 km southwest, sir."
+
+NEVER write filler like "Let me check…", "On it.", "Pulling that up now."
+before or after the tool call. The pins are the visual; your prose is
+the one-line summary. No numbered lists. No "want directions?" trailers.
+
+If the tool returns a precision warning (e.g. IP-locate origin), MENTION
+it once briefly: "position is approximate — the precise GPS isn't
+available, sir."`,
   input_schema: {
     type: 'object',
     properties: {
@@ -300,11 +356,14 @@ that to write a short prose answer that REFERENCES the pins on screen
         const query = input['query'] as string | undefined;
         if (!query) return 'Error: query required.';
         let origin: { lat: number; lon: number; name: string };
+        let originSource: 'browser' | 'ip' | 'profile' | 'explicit' = 'profile';
+        let originAccuracyM: number | undefined;
         const originStr = input['origin'] as string | undefined;
         if (originStr) {
           const g = await geocode(originStr);
           if (!g) return `Could not geocode origin "${originStr}".`;
           origin = g;
+          originSource = 'explicit';
         } else {
           // Prefer the operator's fresh browser geolocation (precise, ~few m).
           const fresh = getFreshLocation();
@@ -314,8 +373,11 @@ that to write a short prose answer that REFERENCES the pins on screen
               lon: fresh.lon,
               name: [fresh.city, fresh.region].filter(Boolean).join(', ') || `${fresh.lat.toFixed(4)}, ${fresh.lon.toFixed(4)}`,
             };
+            originSource = 'browser';
+            originAccuracyM = fresh.accuracyM;
           } else {
             origin = await ipLocate();
+            originSource = 'ip';
           }
         }
         const radiusKm = Math.min(25, Math.max(0.5, (input['radiusKm'] as number | undefined) ?? 5));
@@ -323,8 +385,18 @@ that to write a short prose answer that REFERENCES the pins on screen
         const pois = await nearbySearch(origin.lat, origin.lon, query, radiusKm * 1000, limit);
         if (!pois.length) return `No results for "${query}" within ${radiusKm}km of ${origin.name}.`;
 
+        // Build the "You are here" pin label with precision info so the
+        // operator can immediately see how trustworthy the centre is.
+        const meSub = originSource === 'browser'
+          ? `${origin.name} · GPS ±${originAccuracyM ?? '?'} m`
+          : originSource === 'ip'
+            ? `${origin.name} · IP estimate (±5–25 km)`
+            : originSource === 'explicit'
+              ? `${origin.name} · explicit origin`
+              : origin.name;
+
         const allPins: Pin[] = [
-          { lat: origin.lat, lon: origin.lon, label: 'You are here', sub: origin.name, tag: 'green' },
+          { lat: origin.lat, lon: origin.lon, label: 'You are here', sub: meSub, tag: 'green' },
           ...pois.map((p) => ({ lat: p.lat, lon: p.lon, label: p.label, sub: p.sub, tag: p.tag })),
         ];
         _broadcast('worldview', { action: 'open' });
@@ -334,7 +406,16 @@ that to write a short prose answer that REFERENCES the pins on screen
           const km = p.dist < 1000 ? `${p.dist.toFixed(0)} m` : `${(p.dist / 1000).toFixed(2)} km`;
           return `${i + 1}. ${p.label}${p.sub ? ` — ${p.sub}` : ''} (${km})`;
         }).join('\n');
-        return `Nearby "${query}" from ${origin.name} — ${pois.length} result(s):\n${summary}`;
+
+        // Prepend a precision warning if origin came from IP — gives the
+        // model a clear hint that distances may be off and to mention so.
+        const precisionNote = originSource === 'ip'
+          ? `WARNING: origin is an IP-geolocate centroid (city-level accuracy, can be 5–25 km off the operator's real position). Distances below are from that centroid, NOT the operator.\n\n`
+          : originSource === 'browser' && (originAccuracyM ?? 9999) > 200
+            ? `Note: GPS fix has ±${originAccuracyM} m accuracy.\n\n`
+            : '';
+
+        return `${precisionNote}Nearby "${query}" from ${origin.name} — ${pois.length} result(s):\n${summary}`;
       }
       case 'pins': {
         const pins = input['pins'] as Pin[] | undefined;
