@@ -173,6 +173,18 @@ export function useJarvisWS() {
               });
               break;
             }
+            case 'projects': {
+              const action = event.payload.action as string;
+              if (action === 'active_changed') {
+                const project = event.payload.project as { id: string; name: string } | null | undefined;
+                useJarvisStore.getState().setActiveProject(project ? { id: project.id, name: project.name } : null);
+              }
+              // Re-emit a window event so the open ProjectsModule / LibraryModule refresh.
+              if (typeof window !== 'undefined') {
+                window.dispatchEvent(new CustomEvent('jarvis-projects-event', { detail: event.payload }));
+              }
+              break;
+            }
             case 'telemetry':
               addTelemetry({ source: event.payload.source as string, event: event.payload.event as string, data: event.payload.data as Record<string, unknown>, timestamp: event.timestamp });
               break;

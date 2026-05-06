@@ -7,6 +7,7 @@ import {
   addNote, listNotes,
   listLibraryApps, readManifest, writeManifest, appDir, LIBRARY_ROOT,
 } from '../core/projects.js';
+import { getActiveProjectId, setActiveProjectId, clearActiveProject } from '../core/active-project.js';
 
 const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -60,6 +61,7 @@ export async function projectsRoutes(app: FastifyInstance) {
     if (!body.summary) return reply.status(400).send({ error: 'summary required' });
     const p = signOffProject(id, body.summary);
     if (!p) return reply.status(404).send({ error: 'not found' });
+    if (getActiveProjectId() === p.id) clearActiveProject();
     return reply.send({ project: p });
   });
 
@@ -82,6 +84,30 @@ export async function projectsRoutes(app: FastifyInstance) {
     if (!body.content) return reply.status(400).send({ error: 'content required' });
     if (!getProject(id)) return reply.status(404).send({ error: 'not found' });
     return reply.send({ note: addNote(id, body.kind ?? 'note', body.content) });
+  });
+
+  // ─── Active project (chat context) ────────────────────────────────────
+  app.get('/api/projects/active', async (_req, reply) => {
+    const id = getActiveProjectId();
+    if (!id) return reply.send({ active: null });
+    const p = getProject(id);
+    if (!p) { clearActiveProject(); return reply.send({ active: null }); }
+    return reply.send({ active: p, notes: listNotes(p.id, 12), manifest: p.kind === 'app' ? readManifest(p.slug) : null });
+  });
+
+  app.post('/api/projects/:id/init', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const p = getProject(id);
+    if (!p) return reply.status(404).send({ error: 'not found' });
+    // INIT also flips the project back to active if it was signed off.
+    if (p.status !== 'active') resumeProject(p.id);
+    setActiveProjectId(p.id);
+    return reply.send({ active: getProject(p.id) });
+  });
+
+  app.delete('/api/projects/active', async (_req, reply) => {
+    clearActiveProject();
+    return reply.send({ active: null });
   });
 
   // ─── Library: list + serve assets ─────────────────────────────────────

@@ -50,6 +50,11 @@ interface JarvisState {
   // Focused agent for Agent Control Panel
   focusedAgentId: string | null;
 
+  // Active project (chat-context binding)
+  activeProjectId: string | null;
+  activeProjectName: string | null;
+  setActiveProject: (p: { id: string; name: string } | null) => void;
+
   setConnected: (v: boolean) => void;
   triggerDismiss: () => void;
   setMessages: (m: ChatMessage[]) => void;
@@ -95,6 +100,8 @@ export const useJarvisStore = create<JarvisState>((set) => ({
     'claude-opus-4-5-20251101',
   ],
   focusedAgentId: null,
+  activeProjectId: null,
+  activeProjectName: null,
 
   setConnected: (v) => set({ connected: v }),
 
@@ -191,4 +198,6 @@ export const useJarvisStore = create<JarvisState>((set) => ({
   setAvailableModels: (models) => set({ availableModels: models }),
   
   setFocusedAgent: (id) => set({ focusedAgentId: id }),
+
+  setActiveProject: (p) => set({ activeProjectId: p?.id ?? null, activeProjectName: p?.name ?? null }),
 }));

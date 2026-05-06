@@ -15,6 +15,7 @@ import {
   listLibraryApps, readManifest, writeManifest, appDir, LIBRARY_ROOT,
   type ProjectRow, type AppManifest,
 } from '../core/projects.js';
+import { getActiveProjectId, setActiveProjectId, clearActiveProject } from '../core/active-project.js';
 
 let _broadcast: ((event: string, payload: Record<string, unknown>) => void) | null = null;
 export function setProjectsBroadcast(fn: (event: string, payload: Record<string, unknown>) => void) {
@@ -33,6 +34,30 @@ function fmtProject(p: ProjectRow, manifest?: AppManifest | null): string {
   if (p.summary) lines.push(`  summary: ${p.summary}`);
   if (manifest) lines.push(`  app: ${manifest.ready ? 'built' : 'not yet built'}, ${manifest.icon ?? '◆'} ${manifest.name}`);
   return lines.join('\n');
+}
+
+function resolveProject(input: Record<string, unknown>): ProjectRow | null {
+  const id = (input['id'] as string | undefined) ?? (input['slug'] as string | undefined);
+  if (id) return getProject(id) ?? null;
+  const activeId = getActiveProjectId();
+  if (activeId) return getProject(activeId) ?? null;
+  return null;
+}
+
+function resolveSlug(input: Record<string, unknown>): string | null {
+  const slug = (input['slug'] as string | undefined)?.trim();
+  if (slug) return slug;
+  const id = (input['id'] as string | undefined)?.trim();
+  if (id) {
+    const p = getProject(id);
+    if (p) return p.slug;
+  }
+  const activeId = getActiveProjectId();
+  if (activeId) {
+    const p = getProject(activeId);
+    if (p) return p.slug;
+  }
+  return null;
 }
 
 function safeJoin(slug: string, rel: string): string {
@@ -59,6 +84,31 @@ USE THIS:
   "what was I working on", "where did we leave off", "sign off on this".
 - Whenever the operator asks to "play <thing>", "open <thing>", or
   "launch <thing>" — call action='launch' with the slug.
+
+ACTIVE PROJECT (chat-context binding):
+There is exactly ONE 'active' project at a time, set by the operator
+clicking INIT in the Projects panel or by you calling action='init'.
+While a project is active, the system prompt shows you that project's
+state EVERY turn (name, description, last left off, recent notes,
+manifest). Treat the conversation as work on that project. The tool
+defaults note / set_left_off / write_file / etc. to the active project
+when slug/id are omitted.
+
+Lifecycle:
+  • action='init', id|slug=...   → set active. The operator usually
+    does this from the UI, but you can do it too if they say "let's
+    work on Tetris".
+  • work happens (notes, file edits, mid-task pointers, etc.) — let
+    the active project default propagate; don't keep passing slug.
+  • action='sign_off', summary='...' → ends the working session,
+    writes the summary as a sign_off note, and AUTO-CLEARS the active
+    pointer. The conversation is unfocused again. Use this whenever
+    the operator says "sign off", "end session", "that's a wrap",
+    "done for now", "call it".
+  • action='end_init' → only if the operator wants to UN-init without
+    signing off (rare; e.g. "I'm pausing this for a sec to ask
+    something else"). Doesn't write a summary.
+  • action='active' → tell the operator what's currently INITed.
 
 Actions:
   - { action: "create", name, description?, kind?: 'app'|'research'|'task' }
@@ -140,6 +190,7 @@ PROCESS for "make me a tetris game":
         'create', 'list', 'get', 'resume', 'sign_off', 'note', 'set_left_off',
         'write_file', 'read_file', 'list_files', 'delete_file',
         'complete_app', 'launch', 'library', 'delete',
+        'init', 'end_init', 'active',
       ] },
       id: { type: 'string', description: 'Project id (from create/list/get).' },
       slug: { type: 'string', description: 'App slug (alternative key for app actions).' },
@@ -162,6 +213,29 @@ PROCESS for "make me a tetris game":
     const action = input['action'] as string;
     try {
       switch (action) {
+        case 'init': {
+          const target = resolveProject(input);
+          if (!target) return 'Error: id or slug required.';
+          // INIT also flips the project back to active if it was signed off.
+          if (target.status !== 'active') resumeProject(target.id);
+          setActiveProjectId(target.id);
+          _broadcast?.('projects', { action: 'active_changed', activeId: target.id, project: getProject(target.id) });
+          return `INITed "${target.name}". Conversation is now in context to this project — notes, file edits, and "where did we leave off" all default to it. Say "sign off" when done.`;
+        }
+        case 'end_init':
+        case 'deinit': {
+          if (!getActiveProjectId()) return 'No project is currently INITed.';
+          clearActiveProject();
+          _broadcast?.('projects', { action: 'active_changed', activeId: null });
+          return 'Active project context cleared (without signing off).';
+        }
+        case 'active': {
+          const id = getActiveProjectId();
+          if (!id) return 'No project currently INITed.';
+          const p = getProject(id);
+          if (!p) { clearActiveProject(); return 'No project currently INITed.'; }
+          return `Currently INITed: "${p.name}" (slug=${p.slug}, status=${p.status}).`;
+        }
         case 'create': {
           const name = (input['name'] as string | undefined)?.trim();
           if (!name) return 'Error: name required.';
@@ -187,10 +261,12 @@ PROCESS for "make me a tetris game":
           return fmtProject(p, manifest) + noteLines;
         }
         case 'resume': {
-          const id = (input['id'] as string | undefined) ?? (input['slug'] as string | undefined);
-          if (!id) return 'Error: id required.';
-          const p = resumeProject(getProject(id)?.id ?? '');
-          if (!p) return `No project for "${id}".`;
+          const target = resolveProject(input);
+          if (!target) return 'Error: id required (no active project either).';
+          const p = resumeProject(target.id);
+          if (!p) return `Could not resume "${target.slug}".`;
+          setActiveProjectId(p.id);
+          _broadcast?.('projects', { action: 'active_changed', activeId: p.id, project: p });
           const notes = listNotes(p.id, 5);
           const manifest = p.kind === 'app' ? readManifest(p.slug) : null;
           _broadcast?.('projects', { action: 'updated', project: p });
@@ -198,42 +274,43 @@ PROCESS for "make me a tetris game":
           return `Resumed "${p.name}".\n${p.last_left_off ? `Left off: ${p.last_left_off}\n` : ''}Last 5 notes:\n${recent}\n${manifest ? `\nApp: ${manifest.ready ? 'built and launchable' : 'not yet built'}` : ''}`;
         }
         case 'sign_off': {
-          const id = (input['id'] as string | undefined) ?? (input['slug'] as string | undefined);
+          const target = resolveProject(input);
           const summary = (input['summary'] as string | undefined)?.trim();
-          if (!id) return 'Error: id required.';
+          if (!target) return 'Error: id required (no active project either).';
           if (!summary) return 'Error: summary required.';
-          const target = getProject(id);
-          if (!target) return `No project for "${id}".`;
           const p = signOffProject(target.id, summary);
+          // Sign-off ALWAYS clears the active pointer (whether this project was
+          // active or not, signing it off ends its working session).
+          if (getActiveProjectId() === target.id) {
+            clearActiveProject();
+            _broadcast?.('projects', { action: 'active_changed', activeId: null });
+          }
           _broadcast?.('projects', { action: 'updated', project: p });
-          return `Signed off "${p?.name}" with summary:\n${summary}`;
+          return `Signed off "${p?.name}" with summary:\n${summary}\n\nActive project context cleared. Conversation is now unfocused again.`;
         }
         case 'note': {
-          const id = (input['id'] as string | undefined) ?? (input['slug'] as string | undefined);
+          const target = resolveProject(input);
           const content = (input['content'] as string | undefined)?.trim();
-          if (!id) return 'Error: id required.';
+          if (!target) return 'Error: no project (pass id/slug or INIT a project first).';
           if (!content) return 'Error: content required.';
-          const target = getProject(id);
-          if (!target) return `No project for "${id}".`;
           const n = addNote(target.id, (input['kind'] as 'note'|'session') ?? 'note', content);
-          return `Note added (#${n.id}).`;
+          _broadcast?.('projects', { action: 'note_added', projectId: target.id });
+          return `Note added to "${target.name}" (#${n.id}).`;
         }
         case 'set_left_off': {
-          const id = (input['id'] as string | undefined) ?? (input['slug'] as string | undefined);
+          const target = resolveProject(input);
           const text = (input['text'] as string | undefined)?.trim() ?? (input['content'] as string | undefined)?.trim();
-          if (!id) return 'Error: id required.';
+          if (!target) return 'Error: no project (pass id/slug or INIT a project first).';
           if (!text) return 'Error: text required.';
-          const target = getProject(id);
-          if (!target) return `No project for "${id}".`;
           const p = updateProject(target.id, { last_left_off: text });
           _broadcast?.('projects', { action: 'updated', project: p });
-          return `Marker set: "${text}"`;
+          return `Marker set on "${target.name}": "${text}"`;
         }
         case 'write_file': {
-          const slug = (input['slug'] as string | undefined)?.trim();
+          const slug = resolveSlug(input);
           const path = (input['path'] as string | undefined)?.trim();
           const content = input['content'] as string | undefined;
-          if (!slug) return 'Error: slug required.';
+          if (!slug) return 'Error: slug required (or INIT a project first).';
           if (!path) return 'Error: path required.';
           if (typeof content !== 'string') return 'Error: content (string) required.';
           if (!existsSync(appDir(slug))) mkdirSync(appDir(slug), { recursive: true });
@@ -244,16 +321,16 @@ PROCESS for "make me a tetris game":
           return `Wrote ${path} (${content.length} bytes) to ${slug}/.`;
         }
         case 'read_file': {
-          const slug = (input['slug'] as string | undefined)?.trim();
+          const slug = resolveSlug(input);
           const path = (input['path'] as string | undefined)?.trim();
-          if (!slug || !path) return 'Error: slug and path required.';
+          if (!slug || !path) return 'Error: slug and path required (or INIT a project first).';
           const full = safeJoin(slug, path);
           if (!existsSync(full)) return `File not found: ${slug}/${path}`;
           return readFileSync(full, 'utf8');
         }
         case 'list_files': {
-          const slug = (input['slug'] as string | undefined)?.trim();
-          if (!slug) return 'Error: slug required.';
+          const slug = resolveSlug(input);
+          if (!slug) return 'Error: slug required (or INIT a project first).';
           const dir = appDir(slug);
           if (!existsSync(dir)) return 'No such app.';
           // Walk shallow — surface 1-deep entries.
@@ -265,9 +342,9 @@ PROCESS for "make me a tetris game":
           return out.join('\n') || '(empty)';
         }
         case 'delete_file': {
-          const slug = (input['slug'] as string | undefined)?.trim();
+          const slug = resolveSlug(input);
           const path = (input['path'] as string | undefined)?.trim();
-          if (!slug || !path) return 'Error: slug and path required.';
+          if (!slug || !path) return 'Error: slug and path required (or INIT a project first).';
           const full = safeJoin(slug, path);
           if (!existsSync(full)) return `File not found: ${slug}/${path}`;
           rmSync(full);
@@ -275,8 +352,8 @@ PROCESS for "make me a tetris game":
           return `Deleted ${slug}/${path}.`;
         }
         case 'complete_app': {
-          const slug = (input['slug'] as string | undefined)?.trim();
-          if (!slug) return 'Error: slug required.';
+          const slug = resolveSlug(input);
+          if (!slug) return 'Error: slug required (or INIT a project first).';
           const m = writeManifest(slug, {
             ready: true,
             name: input['name'] as string | undefined ?? readManifest(slug)?.name ?? slug,
@@ -289,8 +366,8 @@ PROCESS for "make me a tetris game":
           return `App "${m.name}" marked ready. Operator can launch via 'projects launch slug=${slug}' or by clicking it in LIBRARY.`;
         }
         case 'launch': {
-          const slug = (input['slug'] as string | undefined)?.trim();
-          if (!slug) return 'Error: slug required.';
+          const slug = resolveSlug(input);
+          if (!slug) return 'Error: slug required (or INIT a project first).';
           const m = readManifest(slug);
           if (!m) return `No such app: ${slug}.`;
           if (!m.ready) return `App "${slug}" exists but isn't built yet — call complete_app first.`;

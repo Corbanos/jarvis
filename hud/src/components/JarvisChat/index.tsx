@@ -253,6 +253,7 @@ function WakeStatusBar({ state, lastTranscript, loading }: { state: WakeState; l
           "{lastTranscript}"
         </span>
       )}
+      <ActiveProjectBadge />
       <MicToggle />
       <SettingsButton />
     </div>
@@ -321,6 +322,30 @@ function ThinkingDots() {
           animation: `thinking-pulse 1.2s ease-in-out ${i * 0.2}s infinite`,
         }} />
       ))}
+    </div>
+  );
+}
+
+function ActiveProjectBadge() {
+  // Use the existing zustand store via a simple hook reference at module scope.
+  const id = useJarvisStore((s) => s.activeProjectId);
+  const name = useJarvisStore((s) => s.activeProjectName);
+  if (!id) return null;
+  return (
+    <div title="Active project — chat is bound to this. Click to scroll to PROJECTS." style={{
+      display: 'flex', alignItems: 'center', gap: 6,
+      padding: '3px 8px',
+      background: 'rgba(0,229,255,0.12)',
+      border: '1px solid rgba(0,229,255,0.45)',
+      borderRadius: 3,
+      fontSize: 8, letterSpacing: '0.15em',
+      color: 'var(--accent-bright)',
+      maxWidth: 180,
+      overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+      fontWeight: 700,
+    }}>
+      <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#00e5ff', boxShadow: '0 0 6px #00e5ff' }} />
+      INIT · {name?.toUpperCase()}
     </div>
   );
 }

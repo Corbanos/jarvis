@@ -1,6 +1,8 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { v4 as uuid } from 'uuid';
 import { readFileSync, existsSync } from 'fs';
+import { getActiveProjectId } from './active-project.js';
+import { getProject, listNotes, readManifest } from './projects.js';
 import { join } from 'path';
 import { homedir } from 'os';
 import { toolRegistry } from './tool-registry.js';
@@ -119,10 +121,54 @@ Every cad render is automatically saved to the CAD library on disk. The library 
 
 Current status: All systems nominal. Standing by.`;
 
+function buildActiveProjectContext(): string {
+  const id = getActiveProjectId();
+  if (!id) return '';
+  const p = getProject(id);
+  if (!p) return '';
+  const notes = listNotes(p.id, 8);
+  const manifest = p.kind === 'app' ? readManifest(p.slug) : null;
+  const lines: string[] = [
+    '',
+    '## ACTIVE PROJECT CONTEXT (very important — read this every turn)',
+    `The operator has INITed a project. Until they sign it off, treat the conversation as work on this project.`,
+    '',
+    `- Name: ${p.name}`,
+    `- Slug: ${p.slug}`,
+    `- Id: ${p.id}`,
+    `- Kind: ${p.kind}`,
+    `- Status: ${p.status}`,
+    p.description ? `- Description: ${p.description}` : '',
+    p.last_left_off ? `- Last left off: ${p.last_left_off}` : '',
+    p.summary ? `- Most recent summary: ${p.summary}` : '',
+    manifest ? `- App built: ${manifest.ready ? 'yes (' + (manifest.icon ?? '◆') + ' ' + manifest.name + ', launchable)' : 'not yet'}` : '',
+  ].filter(Boolean);
+
+  if (notes.length) {
+    lines.push('', `### Recent ${notes.length} notes (newest first):`);
+    for (const n of notes) {
+      const ts = new Date(n.created_at).toISOString().slice(0, 16).replace('T', ' ');
+      lines.push(`  • [${n.kind} ${ts}] ${n.content}`);
+    }
+  }
+
+  lines.push('', '### Active-project rules');
+  lines.push('1. EVERY substantive thing the operator does or says about this project should produce a `projects.note` call so the next session has context. Notes should be short, concrete ("added eraser tool", "decided on 20-line grid", "blocked on collision detection"). One per meaningful step.');
+  lines.push('2. When you EDIT or BUILD the app, use `projects.write_file` against this slug. After substantive changes call `projects.complete_app` if it wasn\'t already ready.');
+  lines.push('3. If the operator gives a quick mid-task pointer ("I\'ll come back to the score logic later"), call `projects.set_left_off` so RESUME shows it next time.');
+  lines.push('4. If the operator says "sign off", "end session", "that\'s a wrap", "done for now", "call it" — write a 1-3 sentence summary of what was accomplished and call `projects.sign_off`. That auto-clears this active context.');
+  lines.push('5. Default for `note` / `write_file` / `set_left_off` calls: omit slug/id and the tool will use this active project. Only pass slug/id if you intentionally want a DIFFERENT project.');
+  lines.push('6. The operator does not need to repeat the project name. "Add a high score table" already means "on this project".');
+  return lines.join('\n');
+}
+
 function buildSystemPrompt(): string {
   const profile = readOperatorProfile();
-  if (!profile) return SYSTEM_PROMPT;
-  return SYSTEM_PROMPT + '\n\n## Operator Profile (loaded from ~/.jarvis/OPERATOR.md)\nThe following is authoritative information about your current operator. Honour their preferences and defaults.\n\n' + profile;
+  const active = buildActiveProjectContext();
+  let out = SYSTEM_PROMPT;
+  if (profile) out += '\n\n## Operator Profile (loaded from ~/.jarvis/OPERATOR.md)\nThe following is authoritative information about your current operator. Honour their preferences and defaults.\n\n' + profile;
+  if (active) out += '\n' + active;
+  return out;
 }
 
 

@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import { useJarvisWS } from '@/hooks/useJarvisWS';
 import { useChatHistory } from '@/hooks/useChatHistory';
 import { useGeolocation } from '@/hooks/useGeolocation';
+import { useActiveProject } from '@/hooks/useActiveProject';
 import { useJarvisStore } from '@/lib/store';
 import { useAudioLevel } from '@/lib/audio-level';
 import { HexGrid } from '@/components/HexGrid';
@@ -68,6 +69,7 @@ function HQ() {
   useJarvisWS();
   useChatHistory('default');
   useGeolocation();
+  useActiveProject();
 
   const connected = useJarvisStore((s) => s.connected);
   const source = useAudioLevel((s) => s.source);
