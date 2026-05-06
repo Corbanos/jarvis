@@ -90,6 +90,12 @@ export function WorldviewModule() {
         case 'clear-pins':
           post({ type: 'worldview:clear-pins' });
           break;
+        case 'track':
+          post({ type: 'worldview:track', layer: cmd.layer ?? 'flights', match: cmd.match ?? '' });
+          break;
+        case 'untrack':
+          post({ type: 'worldview:untrack' });
+          break;
       }
     }
     window.addEventListener(WV_EVENT, onCmd);

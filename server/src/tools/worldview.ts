@@ -1,5 +1,6 @@
 import type { ToolDefinition } from '../types/index.js';
 import { getFreshLocation } from '../core/operator-location.js';
+import { searchFlight, flightsNearLocation, flightsToward, type Flight } from '../core/flights.js';
 
 let _broadcast: ((event: string, payload: Record<string, unknown>) => void) | null = null;
 
@@ -225,6 +226,20 @@ function haversine(a: { lat: number; lon: number }, b: { lat: number; lon: numbe
   return R * 2 * Math.atan2(Math.sqrt(s), Math.sqrt(1 - s));
 }
 
+
+function formatFlight(f: Flight, totalHits: number): string {
+  const altKm = (f.altitudeM / 1000).toFixed(1);
+  const lines = [
+    `${f.callsign} — ${f.aircraftType || 'aircraft type unknown'}`,
+    `Registration: ${f.registration || 'N/A'} · ICAO24: ${f.hex.toUpperCase()}`,
+    `Position: ${f.lat.toFixed(4)}, ${f.lon.toFixed(4)} (${altKm} km altitude)`,
+    `Speed: ${Math.round(f.groundSpeedKmh)} km/h, heading ${Math.round(f.heading)}°`,
+    f.squawk ? `Squawk: ${f.squawk}` : '',
+    totalHits > 1 ? `(${totalHits - 1} more aircraft also matched.)` : '',
+  ].filter(Boolean);
+  return lines.join('\n');
+}
+
 export const worldviewTool: ToolDefinition = {
   name: 'worldview',
   description: `Control the WORLDVIEW geospatial intelligence module — a 3D Cesium globe with layered OSINT feeds AND a pin layer for arbitrary places.
@@ -252,13 +267,34 @@ Actions:
         — drop arbitrary pins. tag: 'cyan' (default) | 'amber' | 'green' | 'red'.
   - { action: "clear-pins" } — wipe pin layer.
 
+LIVE FLIGHT QUERIES (real ADS-B data via adsb.lol — global, no key needed):
+  - { action: "flight", query: "AC1049" | "C-FGKN" | icao24-hex }
+        — look up ONE specific airborne aircraft by callsign / registration /
+          ICAO24 hex. Drops a pin at its current position with type, altitude,
+          speed, heading. Use this when the operator names a flight number.
+  - { action: "flights-near", origin?: "place|lat,lon", radiusKm?: 20-2000, limit?: 1-50 }
+        — list aircraft currently airborne near a location. Defaults to
+          operator's GPS, radius 200 km. Drops pins for each.
+  - { action: "flights-to", destination: "Vancouver" | "lat,lon", headingToleranceDeg?: 5-60, limit?: 1-50 }
+        — aircraft currently heading toward a destination (their current
+          heading aligns with the bearing-to-destination within tolerance).
+          Use this for "show me flights on their way to X". Returns aircraft
+          with distance and course-error, pinned on the globe.
+  - { action: "track-flight", query: "AC1049" }
+        — like 'flight' but also flies the camera to that aircraft and locks
+          camera tracking on the matching live globe entity (if the flights
+          layer is loaded).
+
 Layers: ${KNOWN_LAYERS.join(', ')}.
 Render modes: ${KNOWN_MODES.join(', ')}.
 
 Tactical examples:
   • "where is the nearest 7-Eleven" → action='nearby', query='7-Eleven'.
   • "are there earthquakes today" → action='open' + action='layer' name='seismic' enable=true.
-  • "show me planes over Tokyo" → action='focus' location='Tokyo' + action='layer' name='flights' enable=true.
+  • "show me planes over Tokyo" → action='focus' location='Tokyo' + action='flights-near' origin='Tokyo'.
+  • "show me flights heading to Vancouver" → action='flights-to' destination='Vancouver'.
+  • "where is flight AC1049" → action='flight' query='AC1049'.
+  • "track AC1049" → action='track-flight' query='AC1049'.
   • "fly me to the Eiffel Tower" → action='focus' location='Eiffel Tower' alt=2000.
 
 After calling 'nearby' you receive a numbered list with distances.
@@ -275,7 +311,7 @@ available, sir."`,
   input_schema: {
     type: 'object',
     properties: {
-      action: { type: 'string', enum: ['open', 'close', 'focus', 'layer', 'layers', 'mode', 'nearby', 'pins', 'clear-pins'] },
+      action: { type: 'string', enum: ['open', 'close', 'focus', 'layer', 'layers', 'mode', 'nearby', 'pins', 'clear-pins', 'flight', 'flights-near', 'flights-to', 'track-flight'] },
       location: { type: 'string', description: 'Place name or "lat,lon" (focus)' },
       alt: { type: 'number', description: 'Altitude in metres (focus). Lower = closer.' },
       pitch: { type: 'number', description: 'Camera pitch in degrees (focus). Default -55.' },
@@ -283,10 +319,12 @@ available, sir."`,
       enable: { type: 'boolean' },
       layers: { type: 'object', description: 'Map of { layerName: boolean } (layers action)' },
       mode: { type: 'string', enum: [...KNOWN_MODES] },
-      query: { type: 'string', description: 'POI search term (nearby action)' },
+      query: { type: 'string', description: 'POI search term (nearby action) OR flight callsign/registration/icao24 hex (flight action), e.g. "AC1049", "C-FGKN", "ABC123"' },
       origin: { type: 'string', description: 'Search origin: address or lat,lon. Omit to use operator IP location.' },
       radiusKm: { type: 'number', description: 'Search radius in km (default 5, max 25)' },
       limit: { type: 'number', description: 'Max results (default 8, max 25)' },
+      destination: { type: 'string', description: '(flights-to) Place name or "lat,lon" — flights heading toward this point.' },
+      headingToleranceDeg: { type: 'number', description: '(flights-to) Max angular deviation from direct course (default 25°).' },
       pins: {
         type: 'array',
         items: {
@@ -416,6 +454,83 @@ available, sir."`,
             : '';
 
         return `${precisionNote}Nearby "${query}" from ${origin.name} — ${pois.length} result(s):\n${summary}`;
+      }
+      case 'flight': {
+        const q = (input['query'] as string | undefined)?.trim();
+        if (!q) return 'Error: query required (callsign, registration, or icao24 hex).';
+        const hits = await searchFlight(q);
+        if (!hits.length) return `No active flights match "${q}". The aircraft may not be airborne right now, or it's not transmitting ADS-B.`;
+        const f = hits[0]!;
+        _broadcast('worldview', { action: 'open' });
+        _broadcast('worldview', {
+          action: 'pins', clear: true, fit: true,
+          pins: [{ lat: f.lat, lon: f.lon, label: f.callsign, sub: `${f.aircraftType || '?'} · ${f.registration || '?'} · ${Math.round(f.altitudeM).toLocaleString()} m · ${Math.round(f.groundSpeedKmh)} km/h · hdg ${Math.round(f.heading)}°`, tag: 'amber' }],
+        });
+        return formatFlight(f, hits.length);
+      }
+      case 'flights-near': {
+        let lat: number, lon: number, name = '';
+        const originStr = input['origin'] as string | undefined;
+        if (originStr) {
+          const g = await geocode(originStr);
+          if (!g) return `Could not geocode "${originStr}".`;
+          lat = g.lat; lon = g.lon; name = g.name;
+        } else {
+          const fresh = getFreshLocation();
+          if (fresh) { lat = fresh.lat; lon = fresh.lon; name = [fresh.city, fresh.region].filter(Boolean).join(', '); }
+          else { const ip = await ipLocate(); lat = ip.lat; lon = ip.lon; name = ip.name; }
+        }
+        const radiusKm = Math.min(2000, Math.max(20, (input['radiusKm'] as number | undefined) ?? 200));
+        const limit = Math.min(50, Math.max(1, (input['limit'] as number | undefined) ?? 20));
+        const flights = await flightsNearLocation(lat, lon, radiusKm, limit);
+        if (!flights.length) return `No airborne aircraft within ${radiusKm} km of ${name}.`;
+        _broadcast('worldview', { action: 'open' });
+        _broadcast('worldview', {
+          action: 'pins', clear: true, fit: true,
+          pins: [
+            { lat, lon, label: 'You are here', sub: name, tag: 'green' },
+            ...flights.map((f) => ({ lat: f.lat, lon: f.lon, label: f.callsign, sub: `${f.aircraftType || '?'} · ${Math.round(f.altitudeM).toLocaleString()} m · ${Math.round(f.groundSpeedKmh)} km/h`, tag: 'amber' as const })),
+          ],
+        });
+        const summary = flights.slice(0, 10).map((f, i) => `${i + 1}. ${f.callsign} (${f.aircraftType || '?'}) — ${Math.round(f.altitudeM).toLocaleString()} m, ${Math.round(f.groundSpeedKmh)} km/h`).join('\n');
+        return `${flights.length} airborne aircraft within ${radiusKm} km of ${name}:\n${summary}`;
+      }
+      case 'flights-to': {
+        const dest = (input['destination'] as string | undefined)?.trim();
+        if (!dest) return 'Error: destination required.';
+        const g = await geocode(dest);
+        if (!g) return `Could not geocode destination "${dest}".`;
+        const tol = (input['headingToleranceDeg'] as number | undefined) ?? 25;
+        const limit = Math.min(50, Math.max(1, (input['limit'] as number | undefined) ?? 25));
+        const flights = await flightsToward(g.lat, g.lon, { headingToleranceDeg: tol, limit });
+        if (!flights.length) return `No aircraft currently tracking toward ${g.name} within ${tol}° of direct course.`;
+        _broadcast('worldview', { action: 'open' });
+        _broadcast('worldview', {
+          action: 'pins', clear: true, fit: true,
+          pins: [
+            { lat: g.lat, lon: g.lon, label: g.name.split(',')[0]!, sub: 'destination', tag: 'green' },
+            ...flights.map((f) => ({ lat: f.lat, lon: f.lon, label: f.callsign, sub: `${f.aircraftType || '?'} · ${Math.round(f.distanceKm)} km out · ${Math.round(f.groundSpeedKmh)} km/h`, tag: 'amber' as const })),
+          ],
+        });
+        const summary = flights.slice(0, 12).map((f, i) => `${i + 1}. ${f.callsign} (${f.aircraftType || '?'}) — ${Math.round(f.distanceKm)} km out, course offset ${Math.round(f.courseError)}°`).join('\n');
+        return `${flights.length} aircraft heading toward ${g.name}:\n${summary}`;
+      }
+      case 'track-flight': {
+        const q = (input['query'] as string | undefined)?.trim();
+        if (!q) return 'Error: query required (callsign, registration, or icao24 hex).';
+        const hits = await searchFlight(q);
+        if (!hits.length) return `No active flights match "${q}".`;
+        const f = hits[0]!;
+        // Open + fly to the aircraft + drop a pin + ask the iframe to track its layer entity.
+        _broadcast('worldview', { action: 'open' });
+        _broadcast('worldview', { action: 'focus', lat: f.lat, lon: f.lon, name: f.callsign, alt: 60000, pitch: -45 });
+        _broadcast('worldview', {
+          action: 'pins', clear: true, fit: false,
+          pins: [{ lat: f.lat, lon: f.lon, label: f.callsign, sub: `${f.aircraftType || '?'} · tracking`, tag: 'amber' }],
+        });
+        // Ask the iframe to also lock the camera onto the matching live entity if the flights layer is loaded.
+        _broadcast('worldview', { action: 'track', layer: 'flights', match: f.callsign });
+        return `Tracking ${f.callsign} — ${formatFlight(f, hits.length)}`;
       }
       case 'pins': {
         const pins = input['pins'] as Pin[] | undefined;

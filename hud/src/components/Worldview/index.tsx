@@ -28,7 +28,9 @@ export interface WorldviewPin {
 }
 
 export interface WorldviewCommand {
-  action: 'open' | 'close' | 'focus' | 'layer' | 'layers' | 'mode' | 'pins' | 'clear-pins';
+  action: 'open' | 'close' | 'focus' | 'layer' | 'layers' | 'mode' | 'pins' | 'clear-pins' | 'track' | 'untrack' | 'query';
+  layer?: string;
+  match?: string;
   lat?: number;
   lon?: number;
   name?: string;
