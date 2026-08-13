@@ -48,6 +48,11 @@ async function boot() {
   setInitialCamera();
   await new Promise(r => setTimeout(r, 200));
 
+  // Camera is now parked at the default view. Only from here is it safe for
+  // the bridge to replay queued parent commands — anything it flew to earlier
+  // would be overwritten by setInitialCamera() above.
+  window.WORLDVIEW_BOOTED = true;
+
   setLoadProgress(100, 'SYSTEM ONLINE');
   await new Promise(r => setTimeout(r, 600));
 

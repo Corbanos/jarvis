@@ -6,6 +6,46 @@ import { PrinterCard } from './PrinterCard';
 
 export { parseJarvisResponse, stripCards } from './parser';
 
+/**
+ * Jarvis writes ordinary markdown emphasis, so render it instead of printing
+ * the literal asterisks. Deliberately inline-only (bold / italic / code) —
+ * block markdown is what <jarvis-card> is for. The set handled here mirrors
+ * what useJarvisTTS strips before speaking, so the eyes and the ears agree.
+ *
+ * ** before * in the alternation, otherwise '**x**' matches as italic-'*x*'.
+ */
+const INLINE_MD = /(\*\*[^*\n]+\*\*|`[^`\n]+`|\*[^*\n]+\*)/g;
+
+function InlineMarkdown({ text }: { text: string }) {
+  const parts = text.split(INLINE_MD);
+  return (
+    <>
+      {parts.map((p, i) => {
+        if (!p) return null;
+        if (p.length > 4 && p.startsWith('**') && p.endsWith('**')) {
+          return <strong key={i} style={{ color: 'var(--accent-bright)', fontWeight: 700 }}>{p.slice(2, -2)}</strong>;
+        }
+        if (p.length > 2 && p.startsWith('`') && p.endsWith('`')) {
+          return (
+            <code key={i} style={{
+              fontFamily: 'inherit',
+              background: 'rgba(0,229,255,0.08)',
+              border: '1px solid rgba(0,229,255,0.2)',
+              borderRadius: 2,
+              padding: '0 4px',
+              color: 'var(--accent-primary)',
+            }}>{p.slice(1, -1)}</code>
+          );
+        }
+        if (p.length > 2 && p.startsWith('*') && p.endsWith('*')) {
+          return <em key={i} style={{ color: 'var(--accent-amber)' }}>{p.slice(1, -1)}</em>;
+        }
+        return <span key={i}>{p}</span>;
+      })}
+    </>
+  );
+}
+
 export function JarvisRichResponse({ text }: { text: string }) {
   const segments = parseJarvisResponse(text);
 
@@ -18,7 +58,11 @@ export function JarvisRichResponse({ text }: { text: string }) {
 
 function SegmentRender({ seg }: { seg: Segment }) {
   if (seg.kind === 'text') {
-    return <div style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', lineHeight: 1.7, fontSize: 12 }}>{seg.text}</div>;
+    return (
+      <div style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', lineHeight: 1.7, fontSize: 12 }}>
+        <InlineMarkdown text={seg.text} />
+      </div>
+    );
   }
 
   // Render the right card type

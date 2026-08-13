@@ -3,9 +3,6 @@ import { useEffect, useRef } from 'react';
 import { useJarvisStore } from '@/lib/store';
 import { emitWorldviewEvent } from '@/components/Worldview';
 
-function existsByType(modules: Array<{ type: string }>, type: string): boolean {
-  return modules.some((m) => m.type === type);
-}
 import { useWorkspace, summon, type ModuleType } from '@/lib/workspace';
 import { computeWsUrl } from '@/lib/ws-url';
 
@@ -134,12 +131,12 @@ export function useJarvisWS() {
                 useWorkspace.getState().closeByType('worldview');
                 break;
               }
-              // Replay on next tick so a freshly mounted module catches it.
-              if (existsByType(useWorkspace.getState().modules, 'worldview')) {
-                emitWorldviewEvent(cmd);
-              } else {
-                setTimeout(() => emitWorldviewEvent(cmd), 80);
-              }
+              // emitWorldviewEvent buffers anything the module isn't mounted
+              // to receive yet, so a straight emit is safe here. (The old
+              // store-existence check was always true right after summon(),
+              // making its replay branch unreachable and silently dropping
+              // every command that shared a turn with 'open'.)
+              emitWorldviewEvent(cmd);
               break;
             }
             case 'module': {

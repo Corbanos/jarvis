@@ -9,7 +9,7 @@
  *     postMessage('worldview:focus|layer|layers|mode') to the iframe.
  */
 import { useEffect, useRef, useState } from 'react';
-import { WV_EVENT, type WorldviewCommand } from '@/components/Worldview';
+import { WV_EVENT, registerWorldviewSink, type WorldviewCommand } from '@/components/Worldview';
 
 const LAYERS: Array<{ id: string; label: string; group: string }> = [
   { id: 'flights',    label: 'COMMERCIAL FLIGHTS',  group: 'AIR' },
@@ -37,6 +37,9 @@ const MODES = [
 export function WorldviewModule() {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const [ready, setReady] = useState(false);
+  // Messages produced before the iframe bridge is up, replayed on ready.
+  const outboxRef = useRef<Array<Record<string, unknown>>>([]);
+  const readyRef = useRef(false);
   const [mode, setMode] = useState<string>('normal');
   const [layerState, setLayerState] = useState<Record<string, boolean>>({});
   const [focusName, setFocusName] = useState<string>('');
@@ -49,7 +52,11 @@ export function WorldviewModule() {
       const data = e.data;
       if (!data || typeof data !== 'object') return;
       if (data.type === 'worldview:ready') {
+        readyRef.current = true;
         setReady(true);
+        const frame = iframeRef.current?.contentWindow;
+        const queued = outboxRef.current.splice(0, outboxRef.current.length);
+        if (frame) for (const msg of queued) frame.postMessage(msg, '*');
       } else if (data.type === 'worldview:state') {
         if (data.layers && typeof data.layers === 'object') setLayerState(data.layers);
         if (typeof data.mode === 'string') setMode(data.mode);
@@ -66,7 +73,15 @@ export function WorldviewModule() {
       const cmd = (e as CustomEvent).detail as WorldviewCommand;
       if (!cmd) return;
       const post = (msg: Record<string, unknown>) => {
-        iframeRef.current?.contentWindow?.postMessage(msg, '*');
+        const frame = iframeRef.current?.contentWindow;
+        // Until /worldview/index.html has loaded, the frame is still on
+        // about:blank and postMessage lands nowhere. Hold the message and
+        // replay it when the bridge announces itself.
+        if (!frame || !readyRef.current) {
+          outboxRef.current.push(msg);
+          return;
+        }
+        frame.postMessage(msg, '*');
       };
       switch (cmd.action) {
         case 'focus':
@@ -99,7 +114,13 @@ export function WorldviewModule() {
       }
     }
     window.addEventListener(WV_EVENT, onCmd);
-    return () => window.removeEventListener(WV_EVENT, onCmd);
+    // Announce the sink only after the listener is live, so the flush of
+    // commands buffered pre-mount is delivered here rather than dropped.
+    const unregister = registerWorldviewSink();
+    return () => {
+      unregister();
+      window.removeEventListener(WV_EVENT, onCmd);
+    };
   }, []);
 
   function manualToggle(id: string) {

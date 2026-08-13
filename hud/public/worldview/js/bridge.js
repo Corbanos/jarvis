@@ -330,12 +330,21 @@
     processMsg(data);
   });
 
+  // `viewer` exists early in boot(), but boot() keeps going and calls
+  // setInitialCamera() about a second later. Flushing on viewer-exists alone
+  // meant a queued 'pins'/'focus' flew the camera and then got snapped back to
+  // the default globe view. Wait for the boot flag; fall back on a deadline so
+  // a stall late in boot degrades to the old behaviour instead of hanging.
+  const BOOT_WAIT_MS = 15000;
+  let waited = 0;
   function announceReady() {
-    if (typeof viewer !== 'undefined' && viewer) {
+    const haveViewer = typeof viewer !== 'undefined' && viewer;
+    const booted = window.WORLDVIEW_BOOTED === true;
+    if (haveViewer && (booted || waited >= BOOT_WAIT_MS)) {
       cesiumReady = true; flushQueue();
       post({ type: 'worldview:ready' });
       post(snapshotState());
-    } else { setTimeout(announceReady, 300); }
+    } else { waited += 300; setTimeout(announceReady, 300); }
   }
   announceReady();
 })();

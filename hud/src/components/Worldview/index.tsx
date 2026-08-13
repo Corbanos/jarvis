@@ -44,10 +44,39 @@ export interface WorldviewCommand {
   fit?: boolean;
 }
 
-export function emitWorldviewEvent(payload: WorldviewCommand) {
-  if (typeof window !== 'undefined') {
-    window.dispatchEvent(new CustomEvent(WV_EVENT, { detail: payload }));
+/**
+ * Commands emitted while no WorldviewModule is mounted.
+ *
+ * The server sends 'open' immediately followed by the command that does the
+ * real work ('pins', 'focus', …). `summon()` writes to the workspace store
+ * synchronously, so any "is the module there?" check passes on that second
+ * command — but React has not committed the render yet, so WorldviewModule's
+ * listener does not exist and a plain dispatch goes nowhere. Buffer instead,
+ * and let the module drain this on mount.
+ */
+const pending: WorldviewCommand[] = [];
+let sinkCount = 0;
+
+/** Called by WorldviewModule once its WV_EVENT listener is live. */
+export function registerWorldviewSink(): () => void {
+  sinkCount++;
+  const queued = pending.splice(0, pending.length);
+  for (const cmd of queued) {
+    window.dispatchEvent(new CustomEvent(WV_EVENT, { detail: cmd }));
   }
+  return () => { sinkCount = Math.max(0, sinkCount - 1); };
+}
+
+export function emitWorldviewEvent(payload: WorldviewCommand) {
+  if (typeof window === 'undefined') return;
+  // open/close are serviced by useWorldviewWS at the workspace level, which is
+  // always mounted — those must dispatch even with no module listening.
+  const workspaceLevel = payload.action === 'open' || payload.action === 'close';
+  if (sinkCount === 0 && !workspaceLevel) {
+    pending.push(payload);
+    return;
+  }
+  window.dispatchEvent(new CustomEvent(WV_EVENT, { detail: payload }));
 }
 
 /**
@@ -70,15 +99,10 @@ export function useWorldviewWS() {
         return;
       }
       const existing = ws.modules.find((m) => m.type === 'worldview');
-      if (!existing) {
-        summon('worldview');
-        // Replay this command on next tick so the freshly-mounted
-        // WorldviewModule listener catches it. A second event with the
-        // same detail is fine — handlers are idempotent.
-        setTimeout(() => {
-          window.dispatchEvent(new CustomEvent(WV_EVENT, { detail: cmd }));
-        }, 350);
-      }
+      // Mount the panel if it isn't up. No replay needed — commands that
+      // arrive before the module is listening are buffered by
+      // emitWorldviewEvent and flushed by registerWorldviewSink on mount.
+      if (!existing) summon('worldview');
     }
     window.addEventListener(WV_EVENT, onCmd);
     return () => window.removeEventListener(WV_EVENT, onCmd);

@@ -29,31 +29,9 @@ export function ShellModule() {
     setRunning(true);
     const start = Date.now();
 
-    // Use the chat endpoint with a directive prompt so Jarvis dispatches shell tool
-    // Direct route would be cleaner — but using existing /api/chat keeps things simple
-    try {
-      // Direct shell via the existing tool registry would need a new route. Use Jarvis chat:
-      const res = await authFetch(`${API}/api/chat`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          message: `Run this shell command and return ONLY the raw output, nothing else: ${cmd}`,
-          sessionId: 'shell',
-        }),
-      });
-      // Drain SSE stream
-      if (res.body) {
-        const reader = res.body.getReader();
-        while (true) { const { done } = await reader.read(); if (done) break; }
-      }
-      // We don't have direct output here — fall back: hit shell route
-    } catch (e) {
-      setHistory((h) => [...h, { cmd, output: `Error: ${e}`, status: 'err', duration: Date.now() - start }]);
-      setRunning(false);
-      return;
-    }
-
-    // Better: hit a direct shell endpoint (we'll add one)
+    // Straight to /api/shell — deliberately NOT through /api/chat. Routing the
+    // command through Jarvis would run it a second time on the host and push
+    // the output into the chat transcript, where TTS reads it aloud.
     try {
       const r = await authFetch(`${API}/api/shell`, {
         method: 'POST',

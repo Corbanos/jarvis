@@ -72,7 +72,9 @@ export function useJarvisTTS() {
   }
 
   async function speakText(text: string, gen: number) {
-    const cleaned = stripCardsForSpeech(text).trim();
+    // `text` is already a slice of the speakable view — cards and code were
+    // removed before chunking, so no further stripping is needed here.
+    const cleaned = text.trim();
     if (cleaned.length < 2) return;
     const slot = nextSlotRef.current++;
     try {
@@ -114,7 +116,6 @@ export function useJarvisTTS() {
    * card-still-streaming guard.
    */
   function nextChunkLen(unspoken: string, mustFlush: boolean): number {
-    if (hasUnclosedCard(unspoken)) return 0;
     const hard = unspoken.match(SENTENCE_END);
     if (hard && hard.index !== undefined && hard.index >= MIN_CHUNK_LEN) {
       return hard.index + hard[0].length;
@@ -129,10 +130,16 @@ export function useJarvisTTS() {
     return 0;
   }
 
-  function consumeFromBuffer(fullText: string, mustFlush: boolean) {
+  function consumeFromBuffer(rawText: string, mustFlush: boolean) {
     if (!ttsEnabled) return;
+    // Reduce to prose BEFORE chunking. Chunking first and stripping each chunk
+    // afterwards leaks card/code bodies: a chunk cut at a sentence boundary
+    // inside a card holds an opening tag with no closing tag, so the strip
+    // regex can't match it and Kokoro reads the raw JSON aloud.
+    const speakable = toSpeakable(rawText);
     while (true) {
-      const unspoken = fullText.slice(spokenRef.current.length);
+      if (spokenRef.current.length >= speakable.length) return;
+      const unspoken = speakable.slice(spokenRef.current.length);
       if (!unspoken.length) return;
       const take = nextChunkLen(unspoken, mustFlush);
       if (!take) return;
@@ -175,10 +182,9 @@ export function useJarvisTTS() {
     if (last.id === lastAssistantIdRef.current) return; // nothing new
     lastAssistantIdRef.current = last.id;
     if (!ttsEnabled) return;
-    // If we streamed this whole reply already, spokenRef.current should
-    // start with last.text; just flush any tail. If we didn't stream at
-    // all (e.g. non-streaming source), this speaks the whole message.
-    if (!last.text.startsWith(spokenRef.current)) {
+    // spokenRef holds a prefix of the *speakable* view, so compare against
+    // that same view rather than the raw text (which still has cards in it).
+    if (!toSpeakable(last.text).startsWith(spokenRef.current)) {
       // Stream and final disagree (rare — e.g. server post-processed text).
       // Speak the whole thing fresh.
       resetForNewUtterance();
@@ -191,18 +197,41 @@ export function useJarvisTTS() {
   }, [ttsEnabled]);
 }
 
+/**
+ * Raw reply text → the prose a human should hear.
+ *
+ * Applied to the WHOLE accumulated text on every pass (not per-chunk), so the
+ * result is a stable prefix as more tokens stream in: everything already
+ * spoken stays byte-identical, and only the tail grows.
+ *
+ * A card or fenced block that is still streaming has no closing delimiter yet,
+ * so the strip regexes below cannot see it. Truncating at the dangling opener
+ * keeps its body out of speech until it closes — at which point the strip pass
+ * removes it wholesale and the prose after it becomes speakable.
+ */
+function toSpeakable(s: string): string {
+  return stripCardsForSpeech(dropUnclosedTail(s));
+}
+
+/** Cut the text at an opening <jarvis-card> / ``` fence that never closes. */
+function dropUnclosedTail(s: string): string {
+  let out = s;
+  const card = out.lastIndexOf('<jarvis-card');
+  if (card !== -1 && out.indexOf('</jarvis-card>', card) === -1) out = out.slice(0, card);
+  // An odd number of ``` fences means the last one is still open.
+  const fences = out.match(/```/g);
+  if (fences && fences.length % 2 === 1) out = out.slice(0, out.lastIndexOf('```'));
+  return out;
+}
+
 function stripCardsForSpeech(s: string): string {
   return stripCards(s)
-    .replace(/`{1,3}[\s\S]*?`{1,3}/g, '')
+    .replace(/```[\s\S]*?```/g, '')      // fenced blocks
+    .replace(/`[^`\n]*`/g, '')           // inline code
     .replace(/\*\*([^*]+)\*\*/g, '$1')
     .replace(/\*([^*]+)\*/g, '$1')
     .replace(/[🟢🔴🟡🔵🟣⚪⚫🟠]/g, '')   // emoji bullets read out as nonsense
     .replace(/\s+/g, ' ')
-    .trim();
-}
-
-function hasUnclosedCard(s: string): boolean {
-  const opens = (s.match(/<jarvis-card\b/g) || []).length;
-  const closes = (s.match(/<\/jarvis-card>/g) || []).length;
-  return opens > closes;
+    .trimStart();                        // NOT trim() — a trailing trim would
+                                         // shift the prefix as tokens arrive
 }
