@@ -3,6 +3,7 @@ import { parseJarvisResponse, type Segment } from './parser';
 import { WeatherCard } from './WeatherCard';
 import { CadCard } from './CadCard';
 import { PrinterCard } from './PrinterCard';
+import { WolframCard } from './WolframCard';
 
 export { parseJarvisResponse, stripCards } from './parser';
 
@@ -73,6 +74,8 @@ function SegmentRender({ seg }: { seg: Segment }) {
       return <CadCard data={seg.data as Parameters<typeof CadCard>[0]['data']} />;
     case 'printer':
       return <PrinterCard data={seg.data as Parameters<typeof PrinterCard>[0]['data']} />;
+    case 'wolfram':
+      return <WolframCard data={seg.data as Parameters<typeof WolframCard>[0]['data']} />;
     case 'stat':
       return <StatCard data={seg.data as { label: string; value: string; unit?: string; color?: string }} />;
     case 'list':

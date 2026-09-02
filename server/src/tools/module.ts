@@ -6,7 +6,7 @@ export function setModuleBroadcast(fn: (event: string, payload: Record<string, u
   _broadcast = fn;
 }
 
-const MODULE_TYPES = ['chat', 'agents', 'scheduler', 'telemetry', 'system', 'cad', 'cad-preview', 'weather', 'printer', 'worldview', 'browser', 'shell'] as const;
+const MODULE_TYPES = ['chat', 'agents', 'scheduler', 'telemetry', 'system', 'cad', 'cad-preview', 'weather', 'printer', 'worldview', 'browser', 'shell', 'wolfram'] as const;
 
 export const moduleTool: ToolDefinition = {
   name: 'module',
@@ -28,7 +28,8 @@ Modules:
 - printer: Bambu printer status
 - worldview: Cesium globe with cameras + satellites
 - browser: Browser preview
-- shell: Quick shell terminal`,
+- shell: Quick shell terminal
+- wolfram: Wolfram|Alpha computation panel (query box + result pods)`,
   input_schema: {
     type: 'object',
     properties: {

@@ -19,6 +19,7 @@ const DOCK_ENTRIES: DockEntry[] = [
   { type: 'cad',           label: 'CAD',        icon: '◈',   description: 'CAD library' },
   { type: 'printer',       label: 'PRINTER',    icon: '⎙',   description: 'Bambu printer' },
   { type: 'worldview',     label: 'WORLDVIEW',  icon: '⊕',   description: 'Globe + OSINT' },
+  { type: 'wolfram',       label: 'WOLFRAM',    icon: '∑',   description: 'Wolfram|Alpha computation' },
   { type: 'system',        label: 'SYSTEM',     icon: '◐',   description: 'System telemetry' },
   { type: 'telemetry',     label: 'EVENTS',     icon: '☰',   description: 'Live event feed' },
   { type: 'shell',         label: 'SHELL',      icon: '$',   description: 'Quick shell exec' },

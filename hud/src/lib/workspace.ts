@@ -19,6 +19,7 @@ export type ModuleType =
   | 'shell'
   | 'cad-preview'
   | 'weather'
+  | 'wolfram'
   | 'projects'
   | 'library'
   | 'app';
@@ -65,6 +66,7 @@ const DEFAULT_SIZES: Record<ModuleType, { width: number; height: number }> = {
   shell:          { width: 540, height: 380 },
   'cad-preview':  { width: 520, height: 580 },
   weather:        { width: 460, height: 480 },
+  wolfram:        { width: 520, height: 580 },
   projects:       { width: 520, height: 560 },
   library:        { width: 540, height: 480 },
   app:            { width: 720, height: 600 },
