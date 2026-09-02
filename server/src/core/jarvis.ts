@@ -6,6 +6,7 @@ import { getProject, listNotes, readManifest } from './projects.js';
 import { join } from 'path';
 import { homedir } from 'os';
 import { toolRegistry } from './tool-registry.js';
+import { streamChat, effectiveModel } from './providers/index.js';
 import { memory } from './memory.js';
 import { speak, getVoiceInfo } from '../modules/voice-tts.js';
 import { log } from './logger.js';
@@ -200,7 +201,6 @@ export interface JarvisResponse {
 let currentModel = 'claude-sonnet-4-6';
 
 export function createJarvis(ws: WSHub) {
-  const client = new Anthropic({ apiKey: process.env['ANTHROPIC_API_KEY'] });
 
   function broadcast(type: string, payload: Record<string, unknown>) {
     ws.broadcast({ type: type as never, payload, timestamp: Date.now() });
@@ -232,25 +232,21 @@ export function createJarvis(ws: WSHub) {
     // Agentic loop — run model, execute any tool calls, repeat until model returns end_turn
     const MAX_ITERATIONS = 12;
     for (let iter = 0; iter < MAX_ITERATIONS; iter++) {
-      // Stream the response so HUD sees tokens live
+      // Stream the response so HUD sees tokens live. Whether this lands on
+      // Anthropic or a local Ollama box is the provider layer's business.
       let iterText = '';
-      const stream = client.messages.stream({
+      const final = await streamChat({
         model: currentModel,
-        max_tokens: 8192,
+        maxTokens: 8192,
         system: buildSystemPrompt(),
         tools: toolRegistry.anthropicTools() as Anthropic.Tool[],
         messages,
+        onText: (token: string) => {
+          iterText += token;
+          onToken?.(token);
+          broadcast('thinking', { sessionId, token, id: msgId });
+        },
       });
-
-      // Stream text tokens to HUD/caller as they arrive
-      stream.on('text', (token: string) => {
-        iterText += token;
-        onToken?.(token);
-        broadcast('thinking', { sessionId, token, id: msgId });
-      });
-
-      // Wait for the message to fully complete
-      const final = await stream.finalMessage();
 
       // Append this iteration's text to overall response
       finalText += iterText;
@@ -262,7 +258,7 @@ export function createJarvis(ws: WSHub) {
 
       // Otherwise, execute every tool_use block, then send results back
       const toolUses = final.content.filter(
-        (b): b is Anthropic.ToolUseBlock => b.type === 'tool_use'
+        (b): b is Anthropic.ToolUseBlockParam => b.type === 'tool_use'
       );
 
       if (toolUses.length === 0) {
@@ -317,7 +313,9 @@ export function createJarvis(ws: WSHub) {
   }
 
   function getModel(): string {
-    return currentModel;
+    // Reports the model that will actually serve the next turn, which differs
+    // from currentModel whenever routing points at Ollama.
+    return effectiveModel(currentModel);
   }
 
   return { chat, setModel, getModel };

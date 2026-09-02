@@ -3,6 +3,7 @@ import { v4 as uuid } from 'uuid';
 import { memory } from './memory.js';
 import { getActiveProjectId } from './active-project.js';
 import { toolRegistry } from './tool-registry.js';
+import { streamChat, effectiveModel } from './providers/index.js';
 import { log } from './logger.js';
 import type { AgentRecord } from '../types/index.js';
 import type { WSHub } from '../ws.js';
@@ -53,7 +54,6 @@ export const AVAILABLE_MODELS = [
 export type ClaudeModel = typeof AVAILABLE_MODELS[number];
 
 export function createAgentPool(ws: WSHub) {
-  const client = new Anthropic({ apiKey: process.env['ANTHROPIC_API_KEY'] });
 
   function broadcast(type: string, payload: Record<string, unknown>) {
     ws.broadcast({ type: type as never, payload, timestamp: Date.now() });
@@ -119,22 +119,20 @@ export function createAgentPool(ws: WSHub) {
           broadcast('agent_instruction', { id: agent.id, instruction });
         }
 
-        const stream = client.messages.stream({
+        let iterText = '';
+        const final = await streamChat({
           model: agentModel,
-          max_tokens: 8192,
+          maxTokens: 8192,
           system: AGENT_SYSTEM_PROMPT,
           tools: toolRegistry.anthropicTools().filter((t) => t.name !== 'spawn_agent') as Anthropic.Tool[],
           messages,
+          signal: abort.signal,
+          onText: (token: string) => {
+            iterText += token;
+            // Stream tokens to HUD agent panel
+            broadcast('agent_token', { id: agent.id, token });
+          },
         });
-
-        let iterText = '';
-        stream.on('text', (token: string) => {
-          iterText += token;
-          // Stream tokens to HUD agent panel
-          broadcast('agent_token', { id: agent.id, token });
-        });
-
-        const final = await stream.finalMessage();
 
         if (iterText.trim()) {
           agent.logs.push(iterText.trim());
@@ -159,7 +157,7 @@ export function createAgentPool(ws: WSHub) {
 
         // Execute tool calls
         const toolUses = final.content.filter(
-          (b): b is Anthropic.ToolUseBlock => b.type === 'tool_use'
+          (b): b is Anthropic.ToolUseBlockParam => b.type === 'tool_use'
         );
 
         if (!toolUses.length) {

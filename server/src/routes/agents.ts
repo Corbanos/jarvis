@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify';
+import { getRouting, setRouting, usingOllama } from '../core/model-routing.js';
 
 export async function agentRoutes(app: FastifyInstance) {
   // List all agents (running + historical)
@@ -73,11 +74,23 @@ export async function agentRoutes(app: FastifyInstance) {
   // Model Management
   // ─────────────────────────────────────────────────────────────────────
 
-  // Get current model and available models
+  // Get current model and available models.
+  // When routing points at Ollama, the picker lists that host's pulled models
+  // instead of the Claude line-up — same dropdown, different backend.
   app.get('/api/model', async (_req, reply) => {
+    const r = getRouting();
+    if (r.provider === 'ollama') {
+      return reply.send({
+        current: r.ollamaModel,
+        available: r.ollamaModelsCache,
+        provider: 'ollama',
+        host: r.ollamaBaseUrl,
+      });
+    }
     return reply.send({
       current: app.agentPool.getModel(),
       available: app.agentPool.getAvailableModels(),
+      provider: 'anthropic',
     });
   });
 
@@ -85,6 +98,22 @@ export async function agentRoutes(app: FastifyInstance) {
   app.post('/api/model', async (request, reply) => {
     const body = request.body as { model: string };
     if (!body.model) return reply.status(400).send({ error: 'model required' });
+
+    // Under Ollama routing the name is a local model, so it's validated
+    // against what that host has pulled rather than the Claude list.
+    if (usingOllama() || getRouting().provider === 'ollama') {
+      const r = getRouting();
+      if (r.ollamaModelsCache.length && !r.ollamaModelsCache.includes(body.model)) {
+        return reply.status(400).send({ error: 'Invalid model', available: r.ollamaModelsCache });
+      }
+      setRouting({ ollamaModel: body.model });
+      return reply.send({
+        success: true,
+        model: body.model,
+        provider: 'ollama',
+        message: `Ollama model set to ${body.model} for Jarvis and all future agents`,
+      });
+    }
 
     const valid = app.agentPool.setModel(body.model);
     if (!valid) {

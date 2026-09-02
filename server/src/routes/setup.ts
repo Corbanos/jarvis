@@ -4,6 +4,8 @@ import { writeFileSync, readFileSync, existsSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
 import { log } from '../core/logger.js';
+import { getRouting, setRouting, usingOllama, type Provider } from '../core/model-routing.js';
+import { probeOllama, normalizeBaseUrl } from '../core/providers/ollama.js';
 
 const CONFIG_DIR = join(homedir(), '.jarvis');
 const CONFIG_FILE = join(CONFIG_DIR, 'config.json');
@@ -58,6 +60,12 @@ async function testApiKey(key: string): Promise<{ valid: boolean; error?: string
 export async function setupRoutes(app: FastifyInstance) {
   // Check current key status
   app.get('/api/setup/status', async (_req, reply) => {
+    // A local model needs no Anthropic key — don't gate the HUD on one.
+    if (usingOllama()) {
+      const r = getRouting();
+      return reply.send({ configured: true, valid: true, provider: 'ollama', preview: r.ollamaModel });
+    }
+
     const key = getApiKey();
     if (!key) return reply.send({ configured: false, valid: false });
 
@@ -97,5 +105,67 @@ export async function setupRoutes(app: FastifyInstance) {
     process.env['ANTHROPIC_API_KEY'] = '';
     saveConfig({ anthropicApiKey: undefined });
     return reply.send({ ok: true });
+  });
+
+  // ─────────────────────────────────────────────────────────────────────
+  // Model routing — Anthropic or a local Ollama host
+  // ─────────────────────────────────────────────────────────────────────
+
+  // Current routing config, plus the last-seen model list so the HUD can
+  // render the picker before the operator re-probes.
+  app.get('/api/setup/provider', async (_req, reply) => {
+    const r = getRouting();
+    return reply.send({
+      provider: r.provider,
+      ollamaBaseUrl: r.ollamaBaseUrl,
+      ollamaModel: r.ollamaModel,
+      models: r.ollamaModelsCache,
+      active: usingOllama() ? 'ollama' : 'anthropic',
+      anthropicConfigured: !!getApiKey(),
+    });
+  });
+
+  // Reach out to an Ollama host and list what it has pulled. Read-only —
+  // changes no config, so the operator can check an address before committing.
+  app.post('/api/setup/provider/probe', async (request, reply) => {
+    const body = request.body as { baseUrl?: string };
+    const result = await probeOllama(body.baseUrl ?? '');
+
+    if (result.ok) {
+      log.check('Ollama', true, `${result.baseUrl} — ${result.models?.length ?? 0} model(s)`);
+      // Cache the list so the picker survives the box going offline.
+      setRouting({ ollamaModelsCache: (result.models ?? []).map((m) => m.name) });
+    } else {
+      log.warn('Ollama', result.error ?? 'probe failed');
+    }
+
+    return reply.send(result);
+  });
+
+  // Commit a routing choice.
+  app.post('/api/setup/provider', async (request, reply) => {
+    const body = request.body as { provider?: Provider; ollamaBaseUrl?: string; ollamaModel?: string };
+    const provider: Provider = body.provider === 'ollama' ? 'ollama' : 'anthropic';
+
+    if (provider === 'ollama') {
+      const baseUrl = normalizeBaseUrl(body.ollamaBaseUrl ?? getRouting().ollamaBaseUrl);
+      const model = (body.ollamaModel ?? '').trim() || getRouting().ollamaModel;
+      if (!baseUrl) return reply.status(400).send({ error: 'An Ollama host is required, e.g. 192.168.1.50:11434' });
+      if (!model) return reply.status(400).send({ error: 'Pick a model from the host first' });
+
+      // Verify the host still has that model rather than failing on first chat.
+      const probe = await probeOllama(baseUrl);
+      if (!probe.ok) return reply.status(400).send({ error: probe.error ?? 'Ollama unreachable' });
+      const names = (probe.models ?? []).map((m) => m.name);
+      if (!names.includes(model)) {
+        return reply.status(400).send({ error: `${baseUrl} has no model named "${model}". Available: ${names.join(', ') || 'none'}` });
+      }
+
+      const saved = setRouting({ provider, ollamaBaseUrl: baseUrl, ollamaModel: model, ollamaModelsCache: names });
+      return reply.send({ ok: true, provider: saved.provider, ollamaBaseUrl: saved.ollamaBaseUrl, ollamaModel: saved.ollamaModel, models: names });
+    }
+
+    const saved = setRouting({ provider: 'anthropic' });
+    return reply.send({ ok: true, provider: saved.provider });
   });
 }

@@ -12,6 +12,7 @@ export function AgentControlPanel() {
   const currentModel = useJarvisStore((s) => s.currentModel);
   const availableModels = useJarvisStore((s) => s.availableModels);
   const setCurrentModel = useJarvisStore((s) => s.setCurrentModel);
+  const setAvailableModels = useJarvisStore((s) => s.setAvailableModels);
   const setAgents = useJarvisStore((s) => s.setAgents);
   const clearAgentHistory = useJarvisStore((s) => s.clearAgentHistory);
 
@@ -43,18 +44,26 @@ export function AgentControlPanel() {
     window.addEventListener('jarvis-projects-event', onProjectsEvent);
     const t = setInterval(loadProjects, 8000);
 
-    authFetch(`${API}/api/model`)
-      .then((r) => r.json())
-      .then((data: { current: string; available: string[] }) => {
-        if (data.current) setCurrentModel(data.current);
-      })
-      .catch(() => {});
+    // The list is server-driven: under Ollama routing it's that host's pulled
+    // models, not the Claude line-up.
+    const loadModels = () => {
+      authFetch(`${API}/api/model`)
+        .then((r) => r.json())
+        .then((data: { current: string; available: string[] }) => {
+          if (data.current) setCurrentModel(data.current);
+          if (data.available?.length) setAvailableModels(data.available);
+        })
+        .catch(() => {});
+    };
+    loadModels();
+    window.addEventListener('jarvis-model-routing-changed', loadModels);
 
     return () => {
       clearInterval(t);
       window.removeEventListener('jarvis-projects-event', onProjectsEvent);
+      window.removeEventListener('jarvis-model-routing-changed', loadModels);
     };
-  }, [setAgents, setCurrentModel]);
+  }, [setAgents, setCurrentModel, setAvailableModels]);
 
   const activeAgents = agents.filter((a) => a.status === 'running');
   const historicalAgents = agents.filter((a) => a.status !== 'running');

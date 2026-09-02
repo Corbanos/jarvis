@@ -27,6 +27,7 @@ export function SystemTelemetry() {
   const currentModel = useJarvisStore((s) => s.currentModel);
   const availableModels = useJarvisStore((s) => s.availableModels);
   const setCurrentModel = useJarvisStore((s) => s.setCurrentModel);
+  const setAvailableModels = useJarvisStore((s) => s.setAvailableModels);
 
   useEffect(() => {
     const tick = async () => {
@@ -44,15 +45,25 @@ export function SystemTelemetry() {
       .then((d: VoiceStatus) => setVoice(d))
       .catch(() => { /* ignore */ });
 
-    authFetch(`${API}/api/model`)
-      .then((r) => r.json())
-      .then((d: { current: string }) => { if (d.current) setCurrentModel(d.current); })
-      .catch(() => { /* ignore */ });
+    const loadModels = () => {
+      authFetch(`${API}/api/model`)
+        .then((r) => r.json())
+        .then((d: { current: string; available?: string[] }) => {
+          if (d.current) setCurrentModel(d.current);
+          if (d.available?.length) setAvailableModels(d.available);
+        })
+        .catch(() => { /* ignore */ });
+    };
+    loadModels();
+    window.addEventListener('jarvis-model-routing-changed', loadModels);
 
     tick();
     const t = setInterval(tick, 4000);
-    return () => clearInterval(t);
-  }, [setCurrentModel]);
+    return () => {
+      clearInterval(t);
+      window.removeEventListener('jarvis-model-routing-changed', loadModels);
+    };
+  }, [setCurrentModel, setAvailableModels]);
 
   const uptimeStr = health.uptime ? formatDuration(health.uptime) : '—';
 

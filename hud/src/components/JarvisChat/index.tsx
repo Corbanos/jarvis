@@ -6,6 +6,7 @@ import { useWakeWord, type WakeState } from '@/hooks/useWakeWord';
 import { useJarvisTTS } from '@/hooks/useJarvisTTS';
 import { JarvisRichResponse } from '@/components/JarvisCards';
 import { SettingsButton } from '@/components/SettingsPanel';
+import { ModelRoutingButton } from '@/components/ModelRouting';
 import { useVoiceConfig } from '@/lib/voice-config';
 
 export function JarvisChat() {
@@ -255,6 +256,7 @@ function WakeStatusBar({ state, lastTranscript, loading }: { state: WakeState; l
       )}
       <ActiveProjectBadge />
       <MicToggle />
+      <ModelRoutingButton />
       <SettingsButton />
     </div>
   );
