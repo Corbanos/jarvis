@@ -10,7 +10,7 @@ export function setWolframBroadcast(card: typeof _broadcastCard, module: typeof 
   _broadcastModule = module;
 }
 
-const NOT_CONFIGURED = 'Wolfram|Alpha is not configured. Tell the operator to add an AppID under the 🔌 KEYS panel in the chat header (free at developer.wolframalpha.com). Answer from your own knowledge for now, and say the figure is approximate if it is.';
+const NOT_CONFIGURED = 'Wolfram|Alpha is not configured. Tell the operator to add WOLFRAM_APP_ID=<key> to the .env file (free at developer.wolframalpha.com). Answer from your own knowledge for now, and say the figure is approximate if it is.';
 
 export const wolframTool: ToolDefinition = {
   name: 'wolfram',

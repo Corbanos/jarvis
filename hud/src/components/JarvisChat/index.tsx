@@ -7,7 +7,6 @@ import { useJarvisTTS } from '@/hooks/useJarvisTTS';
 import { JarvisRichResponse } from '@/components/JarvisCards';
 import { SettingsButton } from '@/components/SettingsPanel';
 import { ModelRoutingButton } from '@/components/ModelRouting';
-import { IntegrationsButton } from '@/components/Integrations';
 import { useVoiceConfig } from '@/lib/voice-config';
 
 export function JarvisChat() {
@@ -257,7 +256,6 @@ function WakeStatusBar({ state, lastTranscript, loading }: { state: WakeState; l
       )}
       <ActiveProjectBadge />
       <MicToggle />
-      <IntegrationsButton />
       <ModelRoutingButton />
       <SettingsButton />
     </div>

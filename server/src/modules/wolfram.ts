@@ -8,41 +8,25 @@
  *   - Short Answers   one line                                    → quick lookups
  *   - Spoken Results  a sentence written to be read aloud         → TTS
  *
- * The AppID never leaves the server: the HUD asks this box, this box asks Wolfram.
+ * The AppID (WOLFRAM_APP_ID in .env) never leaves the server: the HUD asks this box,
+ * this box asks Wolfram.
  */
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
-import { join } from 'path';
-import { homedir } from 'os';
+import { config as loadDotenv } from 'dotenv';
 
-const CONFIG_DIR = join(homedir(), '.jarvis');
-const CONFIG_FILE = join(CONFIG_DIR, 'config.json');
+// ── Key ───────────────────────────────────────────────────────────────────
 
-// ── Key storage ───────────────────────────────────────────────────────────
-
-function readConfig(): Record<string, unknown> {
-  if (!existsSync(CONFIG_FILE)) return {};
-  try { return JSON.parse(readFileSync(CONFIG_FILE, 'utf-8')) as Record<string, unknown>; } catch { return {}; }
-}
-
-/** Env wins so a provisioned box needs no UI step; otherwise the saved key. */
+/**
+ * WOLFRAM_APP_ID from the environment. If it's missing, .env is re-read: the
+ * operator adds the line and the next query just works — no restart, and no
+ * second place a secret can live.
+ */
 export function getAppId(): string | null {
-  const env = process.env['WOLFRAM_APP_ID']?.trim();
-  if (env) return env;
-  const saved = readConfig()['wolframAppId'];
-  return typeof saved === 'string' && saved.trim() ? saved.trim() : null;
-}
-
-export function getAppIdSource(): 'env' | 'config' | null {
-  if (process.env['WOLFRAM_APP_ID']?.trim()) return 'env';
-  return getAppId() ? 'config' : null;
-}
-
-export function setAppId(appId: string | null): void {
-  mkdirSync(CONFIG_DIR, { recursive: true });
-  const cfg = readConfig();
-  if (appId) cfg['wolframAppId'] = appId.trim();
-  else delete cfg['wolframAppId'];
-  writeFileSync(CONFIG_FILE, JSON.stringify(cfg, null, 2), 'utf-8');
+  let id = process.env['WOLFRAM_APP_ID']?.trim();
+  if (!id) {
+    loadDotenv({ quiet: true }); // fills only unset vars; never overrides
+    id = process.env['WOLFRAM_APP_ID']?.trim();
+  }
+  return id || null;
 }
 
 export function isConfigured(): boolean {
@@ -175,7 +159,7 @@ export class WolframNotConfigured extends Error {
 function describeStatus(status: number, body: string): string {
   if (status === 501) return "Wolfram|Alpha didn't understand that or has no short answer for it.";
   // Observed live: the Short Answers endpoint returns 401 for a bad key; docs say 403. Treat both the same.
-  if (status === 401 || status === 403) return 'Wolfram|Alpha rejected the AppID — check it under KEYS.';
+  if (status === 401 || status === 403) return 'Wolfram|Alpha rejected the AppID — check WOLFRAM_APP_ID in .env.';
   if (status === 400) return 'Wolfram|Alpha: the query was empty or malformed.';
   if (status === 429) return 'Wolfram|Alpha rate limit reached for this AppID.';
   return `Wolfram|Alpha responded ${status}${body ? `: ${body.slice(0, 200)}` : ''}`;
@@ -239,13 +223,6 @@ export async function queryFull(input: string, opts?: ClientOpts): Promise<Wolfr
   } finally {
     clearTimeout(timer);
   }
-}
-
-/** Cheap validation: a query every key can answer. 403 means the key is bad. */
-export async function testAppId(appId: string, opts?: ClientOpts): Promise<{ ok: boolean; error?: string }> {
-  const r = await shortAnswer('2+2', { ...opts, appId });
-  if (r.ok) return { ok: true };
-  return { ok: false, error: r.error ?? 'Validation failed' };
 }
 
 /** Plaintext rendering of a full result, for when the LLM endpoint is unavailable. */

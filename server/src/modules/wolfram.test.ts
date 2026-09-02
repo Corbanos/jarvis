@@ -4,8 +4,8 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-// Key storage lives in ~/.jarvis/config.json — keep it out of the real one.
-process.env['HOME'] = mkdtempSync(join(tmpdir(), 'jarvis-wolfram-'));
+// Run from a scratch cwd with no .env, so the on-demand .env re-read finds nothing.
+process.chdir(mkdtempSync(join(tmpdir(), 'jarvis-wolfram-')));
 delete process.env['WOLFRAM_APP_ID'];
 
 /** A realistic Full Results payload: input interpretation, primary result, a plot. */
@@ -93,29 +93,33 @@ test('the tool explains itself when no key is set, instead of erroring', async (
   assert.equal(isConfigured(), false);
   const out = await wolframTool.handler({ query: '2+2' });
   assert.match(out, /not configured/i);
-  assert.match(out, /KEYS/);
+  assert.match(out, /WOLFRAM_APP_ID/);
 });
 
-test('a saved key is picked up, and the environment overrides it', async () => {
-  const { getAppId, setAppId, getAppIdSource } = await import('./wolfram.js');
-  setAppId('SAVED-KEY');
-  assert.equal(getAppId(), 'SAVED-KEY');
-  assert.equal(getAppIdSource(), 'config');
+test('the key comes from the environment, and an added .env line is picked up without a restart', async () => {
+  const { getAppId } = await import('./wolfram.js');
+  const { writeFileSync, unlinkSync } = await import('node:fs');
+  assert.equal(getAppId(), null);
+
+  // Operator adds the line to .env while the server is running.
+  writeFileSync('.env', 'WOLFRAM_APP_ID=FROM-DOTENV\n');
+  try {
+    assert.equal(getAppId(), 'FROM-DOTENV');
+  } finally {
+    unlinkSync('.env');
+    delete process.env['WOLFRAM_APP_ID'];
+  }
 
   process.env['WOLFRAM_APP_ID'] = 'ENV-KEY';
   assert.equal(getAppId(), 'ENV-KEY');
-  assert.equal(getAppIdSource(), 'env');
   delete process.env['WOLFRAM_APP_ID'];
-
-  setAppId(null);
-  assert.equal(getAppId(), null);
 });
 
 test('the compute path pushes a card and module to the HUD and returns model-ready text', async () => {
   const wolfram = await import('./wolfram.js');
   const { wolframTool, setWolframBroadcast } = await import('../tools/wolfram.js');
 
-  wolfram.setAppId('TEST-KEY');
+  process.env['WOLFRAM_APP_ID'] = 'TEST-KEY';
   wolfram._setFetchForTests((async (u: string | URL | Request) => {
     const url = String(u);
     if (url.includes('llm-api')) return fakeResponse(200, 'The integral is (2 - x^2) cos(x) + 2 x sin(x) + C.', false);
@@ -136,7 +140,7 @@ test('the compute path pushes a card and module to the HUD and returns model-rea
     assert.equal(modules[0]![1]['action'], 'open');
   } finally {
     wolfram._setFetchForTests(null);
-    wolfram.setAppId(null);
+    delete process.env['WOLFRAM_APP_ID'];
     setWolframBroadcast(null, null);
   }
 });

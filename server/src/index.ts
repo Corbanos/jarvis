@@ -188,8 +188,8 @@ async function main() {
   const dbOk = existsSync(`${process.env['HOME']}/.jarvis/jarvis.db`);
   log.check('SQLite', dbOk, `~/.jarvis/jarvis.db`);
 
-  const { isConfigured: wolframOk, getAppIdSource } = await import('./modules/wolfram.js');
-  log.check('Wolfram|Alpha', wolframOk(), wolframOk() ? `AppID from ${getAppIdSource()}` : 'not configured — add under KEYS in the HUD');
+  const { isConfigured: wolframOk } = await import('./modules/wolfram.js');
+  log.check('Wolfram|Alpha', wolframOk(), wolframOk() ? 'WOLFRAM_APP_ID set' : 'not configured — add WOLFRAM_APP_ID to .env');
 
   log.section('TOOLS');
   toolRegistry.all().forEach((t) => log.tool(t.name));

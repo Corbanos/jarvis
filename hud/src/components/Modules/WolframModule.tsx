@@ -62,7 +62,7 @@ export function WolframModule({ module }: { module: ModuleInstance }) {
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Enter') void ask(); }}
-          placeholder={configured === false ? 'Add a Wolfram AppID under 🔌 KEYS first' : 'integrate x^2 sin x   ·   40 psi to bar   ·   moon phase tonight'}
+          placeholder={configured === false ? 'Set WOLFRAM_APP_ID in .env first' : 'integrate x^2 sin x   ·   40 psi to bar   ·   moon phase tonight'}
           disabled={configured === false}
           spellCheck={false}
           style={{
@@ -105,7 +105,7 @@ export function WolframModule({ module }: { module: ModuleInstance }) {
               </div>
               <div style={{ fontSize: 9, marginTop: 6, opacity: 0.7, padding: '0 16px', lineHeight: 1.5 }}>
                 {configured === false
-                  ? 'Open 🔌 KEYS in the chat header and add your Wolfram|Alpha AppID.'
+                  ? 'Add WOLFRAM_APP_ID=<your key> to the .env file on the host.'
                   : 'Type a query above, or ask Jarvis anything with a numeric answer.'}
               </div>
             </div>
