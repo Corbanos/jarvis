@@ -10,6 +10,16 @@ import type { WSHub } from '../ws.js';
 
 const AGENT_SYSTEM_PROMPT = `You are a J.A.R.V.I.S. sub-agent — an autonomous worker spawned by the main Jarvis to complete a specific goal.
 
+## How this loop works — read this twice
+You run inside an automated loop. Each turn you take does exactly one of two things:
+  (a) calls one or more tools — the results come back and you get another turn; or
+  (b) ends the task by writing, on its own line, either
+        TASK COMPLETE: <one-line summary of what was done and how it was verified>
+        TASK FAILED: <what blocked you and what you tried>
+A turn that does neither is wasted — you will simply be told to continue. So never end a turn on a plan, a status update, or "let me check X" without also calling the tool that checks X. Put the plan in the same turn as your first tool call.
+
+Large goals are expected to take many turns — dozens is normal. Keep going until the goal is verified, not merely attempted: run the test, reload the page, read the file back. Then declare completion.
+
 ## Your role
 - You have a SINGLE, FOCUSED goal. Pursue it relentlessly.
 - You have full tool access: shell, filesystem, browser, web search.
@@ -17,9 +27,9 @@ const AGENT_SYSTEM_PROMPT = `You are a J.A.R.V.I.S. sub-agent — an autonomous 
 - When complete, return a concise SUMMARY of what you did and the result.
 
 ## Output format
-- Narrate progress briefly as you work (1-2 sentences per major step).
+- Narrate progress briefly as you work (1-2 sentences per major step), in the same turn as the tool calls that do the work.
 - Use code blocks for code/file contents.
-- End with: "TASK COMPLETE: <one-line summary>" or "TASK FAILED: <reason>".
+- End with: "TASK COMPLETE: <one-line summary>" or "TASK FAILED: <reason>" on its own line.
 
 ## Constraints
 - Do NOT spawn further sub-agents (avoid runaway recursion).
@@ -53,7 +63,58 @@ export const AVAILABLE_MODELS = [
 
 export type ClaudeModel = typeof AVAILABLE_MODELS[number];
 
-export function createAgentPool(ws: WSHub) {
+// Completion sentinels are honoured only at the start of a line (markdown
+// emphasis allowed), so an agent *talking about* the phrase mid-sentence
+// doesn't end its own run.
+const SENTINEL_COMPLETE = /^[\s*_#>-]*TASK COMPLETE:/im;
+const SENTINEL_FAILED = /^[\s*_#>-]*TASK FAILED:/im;
+
+// A turn that neither calls a tool nor declares an outcome is a pause, not a
+// finish — models routinely open a big task by narrating the plan. Nudge them
+// back to work, but not forever: after this many consecutive idle turns the
+// last message is taken as the result.
+const MAX_IDLE_TURNS = 3;
+// Consecutive max_tokens cut-offs tolerated before giving up on a runaway.
+const MAX_TRUNCATIONS = 6;
+// Agents write whole files; a low ceiling just produces truncation nudges.
+const AGENT_MAX_TOKENS = 32_000;
+
+const IDLE_NUDGE = 'You ended your turn without calling a tool and without declaring an outcome. '
+  + 'This loop only ends when you write `TASK COMPLETE: <summary>` or `TASK FAILED: <reason>` on its own line. '
+  + 'If the goal is genuinely done and verified, write that now. Otherwise keep working — call the tools you need.';
+const TRUNCATION_NUDGE = 'Your output was cut off by the length limit. Continue exactly where you left off — do not repeat what you already wrote.';
+
+const ROLE_BRIEFS: Record<string, string> = {
+  debug: 'Reproduce the problem first, locate the cause, fix it, then re-run the same reproduction until it passes.',
+  builder: 'Implement the feature, then actually run or load it and fix whatever breaks until it works end to end.',
+  research: 'Gather from primary sources, verify claims against each other, and finish with a concrete, sourced summary.',
+  manager: 'Break the goal into ordered steps, execute them, and report what was done at each step.',
+  worker: '',
+};
+
+function buildAgentSystemPrompt(role?: string): string {
+  const brief = role ? ROLE_BRIEFS[role] : undefined;
+  if (!role || !brief) return AGENT_SYSTEM_PROMPT;
+  return `${AGENT_SYSTEM_PROMPT}\n\n## Role: ${role}\n${brief}`;
+}
+
+/**
+ * The assistant turn must be appended before a nudge so roles keep
+ * alternating; an entirely empty turn gets a placeholder because the API
+ * rejects empty content.
+ */
+function assistantTurn(content: Anthropic.ContentBlockParam[], text: string): Anthropic.MessageParam {
+  if (content.length) return { role: 'assistant', content };
+  return { role: 'assistant', content: [{ type: 'text', text: text.trim() || '(no output)' }] };
+}
+
+export interface AgentPoolDeps {
+  /** Overridable so the loop can be driven by a scripted model in tests. */
+  streamChat?: typeof streamChat;
+}
+
+export function createAgentPool(ws: WSHub, deps: AgentPoolDeps = {}) {
+  const stream = deps.streamChat ?? streamChat;
 
   function broadcast(type: string, payload: Record<string, unknown>) {
     ws.broadcast({ type: type as never, payload, timestamp: Date.now() });
@@ -98,7 +159,10 @@ export function createAgentPool(ws: WSHub) {
     broadcast('agent_update', { id: agent.id, status: 'running', model: agentModel });
 
     const messages: Anthropic.MessageParam[] = [{ role: 'user', content: agent.goal }];
+    const system = buildAgentSystemPrompt(agent.role);
     let iter = 0;
+    let idleTurns = 0;
+    let truncations = 0;
     // No iteration cap — agents run until they finish, fail, are aborted, or context is exhausted.
 
     try {
@@ -120,10 +184,10 @@ export function createAgentPool(ws: WSHub) {
         }
 
         let iterText = '';
-        const final = await streamChat({
+        const final = await stream({
           model: agentModel,
-          maxTokens: 8192,
-          system: AGENT_SYSTEM_PROMPT,
+          maxTokens: AGENT_MAX_TOKENS,
+          system,
           tools: toolRegistry.anthropicTools().filter((t) => t.name !== 'spawn_agent') as Anthropic.Tool[],
           messages,
           signal: abort.signal,
@@ -139,31 +203,55 @@ export function createAgentPool(ws: WSHub) {
           memory.saveAgent({ ...agent, logs: agent.logs, model: agentModel });
         }
 
-        // Check for completion sentinel
-        if (/TASK COMPLETE:/i.test(iterText)) {
-          agent.status = 'complete';
-          break;
-        }
-        if (/TASK FAILED:/i.test(iterText)) {
-          agent.status = 'failed';
-          break;
-        }
-
-        if (final.stop_reason !== 'tool_use') {
-          // Model stopped without sentinel — assume done
-          agent.status = 'complete';
-          break;
-        }
-
-        // Execute tool calls
-        const toolUses = final.content.filter(
-          (b): b is Anthropic.ToolUseBlockParam => b.type === 'tool_use'
-        );
+        // Tool calls take priority over anything said alongside them: a model
+        // that writes "TASK COMPLETE" while still requesting a tool is not done.
+        const toolUses = final.stop_reason === 'tool_use'
+          ? final.content.filter((b): b is Anthropic.ToolUseBlockParam => b.type === 'tool_use')
+          : [];
 
         if (!toolUses.length) {
-          agent.status = 'complete';
-          break;
+          if (SENTINEL_COMPLETE.test(iterText)) { agent.status = 'complete'; break; }
+          if (SENTINEL_FAILED.test(iterText)) { agent.status = 'failed'; break; }
+
+          if (final.stop_reason === 'refusal') {
+            agent.status = 'failed';
+            agent.logs.push('[loop] the model declined this request');
+            break;
+          }
+
+          if (final.stop_reason === 'max_tokens') {
+            truncations++;
+            if (truncations > MAX_TRUNCATIONS) {
+              agent.status = 'failed';
+              agent.logs.push(`[loop] output cut off ${truncations} times in a row — stopping`);
+              break;
+            }
+            agent.logs.push('[loop] output cut off by the length limit — asking the agent to continue');
+            broadcast('agent_nudge', { id: agent.id, reason: 'truncated', count: truncations });
+            messages.push(assistantTurn(final.content, iterText));
+            messages.push({ role: 'user', content: TRUNCATION_NUDGE });
+            continue;
+          }
+
+          // Plain end_turn with no outcome declared: the model paused to
+          // narrate. This used to be read as "done", which is why agents were
+          // finishing after a single message.
+          idleTurns++;
+          if (idleTurns > MAX_IDLE_TURNS) {
+            agent.status = 'complete';
+            agent.logs.push(`[loop] agent stopped without declaring an outcome ${idleTurns} times — taking its last message as the result`);
+            break;
+          }
+          agent.logs.push(`[loop] agent paused without a tool call or outcome — nudging (${idleTurns}/${MAX_IDLE_TURNS})`);
+          broadcast('agent_nudge', { id: agent.id, reason: 'idle', count: idleTurns });
+          messages.push(assistantTurn(final.content, iterText));
+          messages.push({ role: 'user', content: IDLE_NUDGE });
+          continue;
         }
+
+        // Real work happened this turn; the pause/truncation counters reset.
+        idleTurns = 0;
+        truncations = 0;
 
         const toolResults: Anthropic.ToolResultBlockParam[] = [];
         for (const tu of toolUses) {
