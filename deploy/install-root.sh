@@ -27,4 +27,21 @@ mkdir -p /opt/homebrew/var/log
 install -o root -g wheel -m 644 "$REPO/deploy/$LABEL.plist" "/Library/LaunchDaemons/$LABEL.plist"
 launchctl bootout "system/$LABEL" 2>/dev/null || true
 launchctl bootstrap system "/Library/LaunchDaemons/$LABEL.plist"
-echo "✓ $LABEL listening on :80"
+echo "✓ $LABEL listening on :80 and :443"
+
+# Caddy mints its local CA on first start. Trust it system-wide so Safari and
+# Chrome on this Mac accept https://jarvis.local without a warning — which is
+# what unlocks browser geolocation for the HUD.
+ROOT_CRT="/opt/homebrew/var/lib/caddy/pki/authorities/local/root.crt"
+for _ in $(seq 1 30); do
+	[ -s "$ROOT_CRT" ] && break
+	sleep 0.5
+done
+if [ -s "$ROOT_CRT" ]; then
+	security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain "$ROOT_CRT"
+	echo "✓ local CA trusted on this Mac (https://jarvis.localhost, https://jarvis.local)"
+	echo "  Phones: open http://jarvis.local/jarvis-ca.crt and install it, then enable it under"
+	echo "  Settings → General → About → Certificate Trust Settings."
+else
+	echo "· local CA not generated yet — rerun this script once Caddy has started" >&2
+fi

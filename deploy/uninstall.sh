@@ -14,7 +14,9 @@ if [ "$(id -u)" = "0" ]; then
 	launchctl bootout system/com.jarvis.caddy 2>/dev/null
 	rm -f /Library/LaunchDaemons/com.jarvis.caddy.plist
 	sed -i '' '/JARVIS local front door/d; /jarvis\.localhost/d' /etc/hosts
-	echo "✓ removed com.jarvis.caddy and the hosts entry"
+	ROOT_CRT="/opt/homebrew/var/lib/caddy/pki/authorities/local/root.crt"
+	[ -s "$ROOT_CRT" ] && security remove-trusted-cert -d "$ROOT_CRT" 2>/dev/null
+	echo "✓ removed com.jarvis.caddy, the hosts entry, and the local CA trust"
 else
 	echo "· front door left in place — run 'sudo bash $0' to remove it too"
 fi

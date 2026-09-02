@@ -1,19 +1,30 @@
 # JARVIS front door.
 #
-# One HTTP origin on port 80 for every name this machine answers to:
-#   http://jarvis.localhost          this Mac only (.localhost is loopback by RFC 6761)
-#   http://jarvis.local              any device on the LAN, via the mDNS alias
-#   http://haydens-Mac-mini.local    any device on the LAN, via native Bonjour
-#   http://192.168.2.87              any device on the LAN, by address
+# Plain HTTP on :80 for every name this machine answers to, and HTTPS on :443
+# for the named hosts, signed by Caddy's own local CA (no public CA can vouch
+# for .local names or LAN addresses).
 #
-# The site address is a bare `:80`, so Caddy answers regardless of Host header.
-# Adding a name above needs no change here — only that the name resolve here.
+#   http://jarvis.localhost   https://jarvis.localhost     this Mac only
+#   http://jarvis.local       https://jarvis.local         any device on the LAN
+#   http://haydens-Mac-mini.local                          any device, native Bonjour
+#   http://192.168.2.87       https://192.168.2.87         any device, by address
+#
+# Why HTTPS at all on a LAN: browsers only expose geolocation, camera, and the
+# microphone on a secure origin. Over plain http:// the HUD works but GPS reads
+# "unavailable". A device trusts the site once by installing the CA from
+# http://jarvis.local/jarvis-ca.crt (install-root.sh does this for the Mac).
+#
+# HTTP is never redirected to HTTPS, so a device that hasn't installed the CA
+# keeps working — just without the secure-context features.
 {
 	admin off
-	# Plain HTTP only. Without this Caddy would try to issue an internal TLS
-	# cert for the .localhost name and redirect to 443, which breaks every
-	# device that doesn't trust its CA.
-	auto_https off
+	# Issue certificates from Caddy's internal CA for every named site.
+	local_certs
+	# install-root.sh trusts the CA explicitly; don't let Caddy also try to
+	# (it fails without a keychain prompt and logs an error every start).
+	skip_install_trust
+	# Serve http:// and https:// side by side; don't force the upgrade.
+	auto_https disable_redirects
 
 	# Caddy's own runtime log (startup, config, errors).
 	log {
@@ -24,7 +35,8 @@
 	}
 }
 
-:80 {
+# Everything a request can hit, shared by the http and https servers below.
+(jarvis) {
 	encode zstd gzip
 
 	# Access log. Separate from the runtime log above: this one answers
@@ -34,6 +46,17 @@
 			roll_size 10MiB
 			roll_keep 3
 		}
+	}
+
+	# The local CA's root certificate, so a phone can trust the https:// site.
+	# iPhone: open this URL in Safari, allow the profile, install it under
+	# Settings → Profile Downloaded, then enable it under Settings → General →
+	# About → Certificate Trust Settings.
+	handle /jarvis-ca.crt {
+		root * /opt/homebrew/var/lib/caddy/pki/authorities/local
+		rewrite * /root.crt
+		header Content-Type application/x-x509-ca-cert
+		file_server
 	}
 
 	# Fastify owns the API, the WebSocket hub, and library asset serving.
@@ -52,4 +75,15 @@
 	handle {
 		reverse_proxy 127.0.0.1:3001
 	}
+}
+
+# Plain HTTP, any hostname.
+:80 {
+	import jarvis
+}
+
+# HTTPS. A certificate has to be issued *for* names, so these are listed
+# explicitly. Add a name here and run deploy/reload.sh to cover it.
+https://jarvis.local, https://haydens-Mac-mini.local, https://jarvis.localhost, https://localhost, https://192.168.2.87 {
+	import jarvis
 }

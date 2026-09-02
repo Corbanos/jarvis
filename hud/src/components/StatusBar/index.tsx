@@ -1,6 +1,7 @@
 'use client';
 import { useEffect, useState } from 'react';
 import { useJarvisStore } from '@/lib/store';
+import { requestPreciseLocation, secureUpgradeUrl, usePreciseLocation } from '@/lib/geolocation';
 import { RingGauge } from '@/components/RingGauge';
 
 export function StatusBar() {
@@ -79,6 +80,9 @@ export function StatusBar() {
 
         <div style={{ width: 1, height: 32, background: 'rgba(0,229,255,0.15)' }} />
 
+        <PreciseLocationControl />
+        <div style={{ width: 1, height: 32, background: 'rgba(0,229,255,0.15)' }} />
+
         <DataChip label="UPTIME" value={fmt(uptime)} />
         <DataChip label="AGENTS" value={String(activeAgents)} color={activeAgents > 0 ? 'var(--accent-amber)' : undefined} />
         <DataChip label="POWER" value="100%" color="var(--accent-green)" />
@@ -99,6 +103,51 @@ export function StatusBar() {
         <span style={{ fontSize: 9, color: 'var(--text-secondary)', letterSpacing: '0.15em' }}>{date}</span>
       </div>
     </div>
+  );
+}
+
+function PreciseLocationControl() {
+  const status = usePreciseLocation((state) => state.status);
+  const accuracyM = usePreciseLocation((state) => state.accuracyM);
+  const message = usePreciseLocation((state) => state.message);
+  // Resolved after mount: window doesn't exist during SSR, and computing it
+  // during render would make the server and client disagree on the label.
+  const [needsHttps, setNeedsHttps] = useState(false);
+  useEffect(() => { setNeedsHttps(secureUpgradeUrl() !== null); }, []);
+
+  const active = status === 'active';
+  const color = active
+    ? (accuracyM !== null && accuracyM <= 100 ? 'var(--accent-green)' : 'var(--accent-amber)')
+    : status === 'denied' || status === 'unavailable' || status === 'error'
+      ? 'var(--accent-red)'
+      : 'var(--accent-amber)';
+  const value = active
+    ? `GPS ±${accuracyM ?? '?'}M`
+    : status === 'requesting'
+      ? 'LOCATING...'
+      : status === 'denied'
+        ? 'LOCATION BLOCKED'
+        : status === 'unavailable'
+          ? (needsHttps ? 'GPS NEEDS HTTPS' : 'GPS UNAVAILABLE')
+          : 'ENABLE PRECISE';
+
+  return (
+    <button
+      type="button"
+      onClick={requestPreciseLocation}
+      title={message}
+      aria-label={`${value}. ${message}`}
+      style={{
+        display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 1,
+        border: 0, padding: '4px 6px', background: 'transparent', cursor: 'pointer',
+        fontFamily: 'inherit', minWidth: 112,
+      }}
+    >
+      <span style={{ fontSize: 8, color: 'var(--text-dim)', letterSpacing: '0.2em' }}>LOCATION</span>
+      <span style={{ fontSize: 10, color, fontWeight: 700, letterSpacing: '0.08em', textShadow: active ? `0 0 8px ${color}` : undefined }}>
+        {value}
+      </span>
+    </button>
   );
 }
 

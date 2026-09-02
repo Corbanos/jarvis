@@ -1,5 +1,5 @@
 import type { ToolDefinition } from '../types/index.js';
-import { getFreshLocation } from '../core/operator-location.js';
+import { getFreshLocation, summarizePreciseLocation } from '../core/operator-location.js';
 import { searchFlight, flightsNearLocation, flightsToward, type Flight } from '../core/flights.js';
 
 let _broadcast: ((event: string, payload: Record<string, unknown>) => void) | null = null;
@@ -253,6 +253,9 @@ with plain text only.
 Actions:
   - { action: "open" } — show the globe panel.
   - { action: "close" } — hide it.
+  - { action: "where-am-i" } — return and pin the operator's fresh precise
+        browser location with measured accuracy. ALWAYS use this when the
+        operator asks for their current location; never substitute profile city.
   - { action: "focus", location: "Toronto" | "lat,lon", alt?, pitch? }
         — fly camera to a place. Use alt: 5000 for street-level,
           alt: 50000 for neighborhood, alt: 500000 for city, alt: 1500000 default.
@@ -261,8 +264,9 @@ Actions:
   - { action: "mode", mode: "normal"|"nvg"|"flir"|"crt" } — render mode.
   - { action: "nearby", query: "<thing>", origin?: "address|lat,lon", radiusKm?, limit? }
         — POI search via Overpass/OSM. Drops pins on the globe and zooms
-          to fit. If origin omitted, uses operator IP location (Toronto
-          by default). Returns a numbered list with distances.
+          to fit. If origin omitted, uses the operator's precise browser
+          location when fresh, then IP only as a labelled fallback.
+          Returns a numbered list with distances.
   - { action: "pins", pins: [{ lat, lon, label, sub?, tag? }], clear?, fit? }
         — drop arbitrary pins. tag: 'cyan' (default) | 'amber' | 'green' | 'red'.
   - { action: "clear-pins" } — wipe pin layer.
@@ -289,6 +293,8 @@ Layers: ${KNOWN_LAYERS.join(', ')}.
 Render modes: ${KNOWN_MODES.join(', ')}.
 
 Tactical examples:
+  • "where am I" → action='where-am-i'.
+  • "what is my exact location" → action='where-am-i'.
   • "where is the nearest 7-Eleven" → action='nearby', query='7-Eleven'.
   • "are there earthquakes today" → action='open' + action='layer' name='seismic' enable=true.
   • "show me planes over Tokyo" → action='focus' location='Tokyo' + action='flights-near' origin='Tokyo'.
@@ -311,7 +317,7 @@ available, sir."`,
   input_schema: {
     type: 'object',
     properties: {
-      action: { type: 'string', enum: ['open', 'close', 'focus', 'layer', 'layers', 'mode', 'nearby', 'pins', 'clear-pins', 'flight', 'flights-near', 'flights-to', 'track-flight'] },
+      action: { type: 'string', enum: ['open', 'close', 'where-am-i', 'focus', 'layer', 'layers', 'mode', 'nearby', 'pins', 'clear-pins', 'flight', 'flights-near', 'flights-to', 'track-flight'] },
       location: { type: 'string', description: 'Place name or "lat,lon" (focus)' },
       alt: { type: 'number', description: 'Altitude in metres (focus). Lower = closer.' },
       pitch: { type: 'number', description: 'Camera pitch in degrees (focus). Default -55.' },
@@ -320,7 +326,7 @@ available, sir."`,
       layers: { type: 'object', description: 'Map of { layerName: boolean } (layers action)' },
       mode: { type: 'string', enum: [...KNOWN_MODES] },
       query: { type: 'string', description: 'POI search term (nearby action) OR flight callsign/registration/icao24 hex (flight action), e.g. "AC1049", "C-FGKN", "ABC123"' },
-      origin: { type: 'string', description: 'Search origin: address or lat,lon. Omit to use operator IP location.' },
+      origin: { type: 'string', description: 'Search origin: address or lat,lon. Omit to use the operator precise browser location, with IP as fallback.' },
       radiusKm: { type: 'number', description: 'Search radius in km (default 5, max 25)' },
       limit: { type: 'number', description: 'Max results (default 8, max 25)' },
       destination: { type: 'string', description: '(flights-to) Place name or "lat,lon" — flights heading toward this point.' },
@@ -353,6 +359,26 @@ available, sir."`,
       case 'close':
         _broadcast('worldview', { action: 'close' });
         return 'Worldview closed.';
+      case 'where-am-i': {
+        const fresh = getFreshLocation();
+        const summary = summarizePreciseLocation(fresh);
+        if (!fresh || !summary) {
+          return 'Precise browser location is unavailable. The operator must enable the HUD LOCATION control; do not substitute an IP or profile location.';
+        }
+        const accuracy = summary.accuracyM === undefined ? 'unknown' : `${summary.accuracyM} m`;
+        _broadcast('worldview', { action: 'open' });
+        _broadcast('worldview', {
+          action: 'pins', clear: true, fit: true,
+          pins: [{
+            lat: fresh.lat,
+            lon: fresh.lon,
+            label: 'You are here',
+            sub: `${summary.name} · browser GPS ±${accuracy}`,
+            tag: 'green',
+          }],
+        });
+        return `Precise browser location: ${summary.name} at ${summary.coordinates}. Browser-reported accuracy: ±${accuracy}.`;
+      }
       case 'focus': {
         const location = input['location'] as string | undefined;
         if (!location) return 'Error: location required for focus.';
