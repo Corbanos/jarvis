@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.jarvis.caddy</string>
+	<!-- A LaunchDaemon, not an Agent: binding port 80 requires root, and this
+	     way the front door is up before anyone logs in. -->
+	<key>ProgramArguments</key>
+	<array>
+		<string>/opt/homebrew/bin/caddy</string>
+		<string>run</string>
+		<string>--config</string>
+		<string>/Users/elimindell/Projects/jarvis/deploy/Caddyfile</string>
+	</array>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PATH</key>
+		<string>/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+		<!-- Matches Homebrew's own caddy service layout. -->
+		<key>XDG_DATA_HOME</key>
+		<string>/opt/homebrew/var/lib</string>
+		<key>HOME</key>
+		<string>/opt/homebrew/var/lib</string>
+	</dict>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<true/>
+	<key>StandardOutPath</key>
+	<string>/opt/homebrew/var/log/jarvis-caddy-stdout.log</string>
+	<key>StandardErrorPath</key>
+	<string>/opt/homebrew/var/log/jarvis-caddy-stdout.log</string>
+</dict>
+</plist>

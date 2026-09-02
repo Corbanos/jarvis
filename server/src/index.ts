@@ -57,7 +57,12 @@ async function main() {
     }
   }
 
-  const app = Fastify({ logger: false });
+  // Trust only the loopback reverse proxy (Caddy on :80). Without this every
+  // proxied request would present as 127.0.0.1 and the access-token gate would
+  // wave the whole LAN through as "loopback". Restricting the trust list to
+  // 127.0.0.1 means a device hitting :7777 directly cannot spoof
+  // X-Forwarded-For to impersonate a local caller.
+  const app = Fastify({ logger: false, trustProxy: ['127.0.0.1', '::1'] });
   await app.register(cors, { origin: '*' });
 
   // Access token middleware (no-op if not configured)

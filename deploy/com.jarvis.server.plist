@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.jarvis.server</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/opt/homebrew/bin/node</string>
+		<string>/Users/elimindell/Projects/jarvis/server/dist/index.js</string>
+	</array>
+	<!-- Repo root, not server/: dotenv reads .env relative to cwd. -->
+	<key>WorkingDirectory</key>
+	<string>/Users/elimindell/Projects/jarvis</string>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<!-- launchd starts with a bare PATH; whisper-cli, ffmpeg and openscad
+		     all live in Homebrew's bin and are shelled out to at runtime. -->
+		<key>PATH</key>
+		<string>/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+		<key>NODE_ENV</key>
+		<string>production</string>
+	</dict>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<true/>
+	<key>StandardOutPath</key>
+	<string>/Users/elimindell/Library/Logs/jarvis/server.log</string>
+	<key>StandardErrorPath</key>
+	<string>/Users/elimindell/Library/Logs/jarvis/server.log</string>
+</dict>
+</plist>

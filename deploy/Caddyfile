@@ -1,0 +1,45 @@
+# JARVIS front door.
+#
+# One HTTP origin on port 80 for every name this machine answers to:
+#   http://jarvis.localhost          this Mac only (.localhost is loopback by RFC 6761)
+#   http://jarvis.local              any device on the LAN, via the mDNS alias
+#   http://haydens-Mac-mini.local    any device on the LAN, via native Bonjour
+#   http://192.168.2.87              any device on the LAN, by address
+#
+# The site address is a bare `:80`, so Caddy answers regardless of Host header.
+# Adding a name above needs no change here — only that the name resolve here.
+{
+	admin off
+	# Plain HTTP only. Without this Caddy would try to issue an internal TLS
+	# cert for the .localhost name and redirect to 443, which breaks every
+	# device that doesn't trust its CA.
+	auto_https off
+
+	log {
+		output file /opt/homebrew/var/log/jarvis-caddy.log {
+			roll_size 10MiB
+			roll_keep 3
+		}
+	}
+}
+
+:80 {
+	encode zstd gzip
+
+	# Fastify owns the API, the WebSocket hub, and library asset serving.
+	# Routed straight there rather than through Next's rewrites, so WebSocket
+	# upgrades and SSE chat streams aren't relayed through two proxies.
+	@backend path /api/* /ws /ws/* /library/*
+	handle @backend {
+		reverse_proxy 127.0.0.1:7777 {
+			# Stream SSE and WS through unbuffered; chat replies arrive token
+			# by token rather than in one lump at the end.
+			flush_interval -1
+		}
+	}
+
+	# Everything else is the Next.js HUD.
+	handle {
+		reverse_proxy 127.0.0.1:3001
+	}
+}
