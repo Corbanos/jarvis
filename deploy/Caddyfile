@@ -15,6 +15,7 @@
 	# device that doesn't trust its CA.
 	auto_https off
 
+	# Caddy's own runtime log (startup, config, errors).
 	log {
 		output file /opt/homebrew/var/log/jarvis-caddy.log {
 			roll_size 10MiB
@@ -25,6 +26,15 @@
 
 :80 {
 	encode zstd gzip
+
+	# Access log. Separate from the runtime log above: this one answers
+	# "did that phone actually reach us, and what did it ask for?"
+	log {
+		output file /opt/homebrew/var/log/jarvis-access.log {
+			roll_size 10MiB
+			roll_keep 3
+		}
+	}
 
 	# Fastify owns the API, the WebSocket hub, and library asset serving.
 	# Routed straight there rather than through Next's rewrites, so WebSocket
