@@ -46,19 +46,24 @@ interface InternalAgent extends AgentRecord {
 
 const pool = new Map<string, InternalAgent>();
 
-// Current model for all agents
-// Default to the latest Sonnet — best balance of quality, speed, and cost.
-let currentModel = 'claude-sonnet-4-6';
+// Current model for all agents.
+// Opus 5 is the recommended default for agentic work: strongest reasoning
+// at Opus pricing, thinking on by default.
+let currentModel = 'claude-opus-5';
 
-// Available models, ordered newest → oldest. Verified against
-// https://api.anthropic.com/v1/models on 2026-05-05.
+// Available models, newest first within each tier. Current as of 2026-09-02.
+// Bare ids only — never date-suffixed; the API resolves each to its latest
+// snapshot, and suffixed ids stop working when a snapshot is retired.
 export const AVAILABLE_MODELS = [
-  'claude-opus-4-7',           // newest Opus
-  'claude-sonnet-4-6',         // newest Sonnet (default)
-  'claude-haiku-4-5-20251001', // newest Haiku
-  'claude-opus-4-6',           // previous Opus
-  'claude-sonnet-4-5-20250929',// previous Sonnet
-  'claude-opus-4-5-20251101',  // earlier Opus 4.5
+  'claude-opus-5',      // default
+  'claude-fable-5-1',   // most capable; premium pricing, thinking always on
+  'claude-fable-5',
+  'claude-opus-4-8',
+  'claude-opus-4-7',
+  'claude-opus-4-6',
+  'claude-sonnet-5',
+  'claude-sonnet-4-6',
+  'claude-haiku-4-5',
 ] as const;
 
 export type ClaudeModel = typeof AVAILABLE_MODELS[number];

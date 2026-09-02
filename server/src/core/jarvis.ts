@@ -198,7 +198,7 @@ export interface JarvisResponse {
 }
 
 // Current model used by Jarvis (shared with agent-pool)
-let currentModel = 'claude-sonnet-4-6';
+let currentModel = 'claude-opus-5';
 
 export function createJarvis(ws: WSHub) {
 

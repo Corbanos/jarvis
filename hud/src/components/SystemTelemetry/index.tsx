@@ -2,6 +2,7 @@
 import { useEffect, useState } from 'react';
 import { authFetch } from '@/lib/auth';
 import { useJarvisStore } from '@/lib/store';
+import { formatModelName as formatModelLabel } from '@/lib/model-names';
 
 const API = process.env['NEXT_PUBLIC_JARVIS_API'] ?? 'http://localhost:7777';
 
@@ -126,22 +127,7 @@ export function SystemTelemetry() {
 }
 
 function prettyModel(m: string): string {
-  // Map api id → display name. Keep these in sync with AVAILABLE_MODELS.
-  if (m === 'claude-opus-4-7')              return 'Opus 4.7';
-  if (m === 'claude-sonnet-4-6')            return 'Sonnet 4.6';
-  if (m === 'claude-opus-4-6')              return 'Opus 4.6';
-  if (m === 'claude-opus-4-5-20251101')     return 'Opus 4.5';
-  if (m === 'claude-haiku-4-5-20251001')    return 'Haiku 4.5';
-  if (m === 'claude-sonnet-4-5-20250929')   return 'Sonnet 4.5';
-  if (m.includes('opus-4-7'))   return 'Opus 4.7';
-  if (m.includes('sonnet-4-6')) return 'Sonnet 4.6';
-  if (m.includes('opus-4-6'))   return 'Opus 4.6';
-  if (m.includes('opus-4-5'))   return 'Opus 4.5';
-  if (m.includes('haiku-4-5'))  return 'Haiku 4.5';
-  if (m.includes('sonnet-4-5')) return 'Sonnet 4.5';
-  if (m.includes('sonnet-4'))   return 'Sonnet 4';
-  if (m.includes('opus-4'))     return 'Opus 4';
-  return m;
+  return formatModelLabel(m);
 }
 
 function Stat({ label, value, unit, color = 'var(--accent-bright)' }: { label: string; value: string; unit?: string; color?: string }) {
