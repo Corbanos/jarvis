@@ -7,6 +7,7 @@ import { log } from '../core/logger.js';
 import { getRouting, setRouting, usingOllama, usingOpenAI, EFFORT_LEVELS, type Provider, type Effort } from '../core/model-routing.js';
 import * as openaiAuth from '../core/openai-auth.js';
 import { listOpenAIModels, CURATED_OPENAI_MODELS } from '../core/providers/openai.js';
+import { fetchCodexUsage } from '../core/openai-usage.js';
 import { probeOllama, normalizeBaseUrl } from '../core/providers/ollama.js';
 
 const CONFIG_DIR = join(homedir(), '.jarvis');
@@ -225,6 +226,12 @@ export async function setupRoutes(app: FastifyInstance) {
     openaiAuth.signOut();
     if (getRouting().provider === 'openai' && !openaiAuth.isConfigured()) setRouting({ provider: 'anthropic' });
     return reply.send({ ok: true, status: openaiAuth.getAuthStatus() });
+  });
+
+  // Subscription usage windows, for the status bar. Cached briefly server-side.
+  app.get('/api/setup/openai/usage', async (request, reply) => {
+    const force = (request.query as Record<string, unknown>)['force'] === '1';
+    return reply.send(await fetchCodexUsage(fetch, force));
   });
 
   app.get('/api/setup/openai/models', async (_req, reply) => {

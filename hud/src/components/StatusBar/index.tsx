@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import { useJarvisStore } from '@/lib/store';
 import { requestPreciseLocation, secureUpgradeUrl, usePreciseLocation } from '@/lib/geolocation';
 import { RingGauge } from '@/components/RingGauge';
+import { CodexUsage } from './CodexUsage';
 
 export function StatusBar() {
   const connected = useJarvisStore((s) => s.connected);
@@ -81,6 +82,7 @@ export function StatusBar() {
         <div style={{ width: 1, height: 32, background: 'rgba(0,229,255,0.15)' }} />
 
         <PreciseLocationControl />
+        <CodexUsage />
         <div style={{ width: 1, height: 32, background: 'rgba(0,229,255,0.15)' }} />
 
         <DataChip label="UPTIME" value={fmt(uptime)} />
