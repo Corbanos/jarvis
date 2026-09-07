@@ -4,7 +4,9 @@ import { writeFileSync, readFileSync, existsSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
 import { log } from '../core/logger.js';
-import { getRouting, setRouting, usingOllama, type Provider } from '../core/model-routing.js';
+import { getRouting, setRouting, usingOllama, usingOpenAI, type Provider } from '../core/model-routing.js';
+import * as openaiAuth from '../core/openai-auth.js';
+import { listOpenAIModels, CURATED_OPENAI_MODELS } from '../core/providers/openai.js';
 import { probeOllama, normalizeBaseUrl } from '../core/providers/ollama.js';
 
 const CONFIG_DIR = join(homedir(), '.jarvis');
@@ -65,6 +67,9 @@ export async function setupRoutes(app: FastifyInstance) {
       const r = getRouting();
       return reply.send({ configured: true, valid: true, provider: 'ollama', preview: r.ollamaModel });
     }
+    if (usingOpenAI()) {
+      return reply.send({ configured: true, valid: true, provider: 'openai', preview: getRouting().openaiModel });
+    }
 
     const key = getApiKey();
     if (!key) return reply.send({ configured: false, valid: false });
@@ -120,7 +125,10 @@ export async function setupRoutes(app: FastifyInstance) {
       ollamaBaseUrl: r.ollamaBaseUrl,
       ollamaModel: r.ollamaModel,
       models: r.ollamaModelsCache,
-      active: usingOllama() ? 'ollama' : 'anthropic',
+      openaiModel: r.openaiModel,
+      openaiModels: r.openaiModelsCache.length ? r.openaiModelsCache : CURATED_OPENAI_MODELS,
+      openai: openaiAuth.getAuthStatus(),
+      active: usingOllama() ? 'ollama' : usingOpenAI() ? 'openai' : 'anthropic',
       anthropicConfigured: !!getApiKey(),
     });
   });
@@ -144,8 +152,17 @@ export async function setupRoutes(app: FastifyInstance) {
 
   // Commit a routing choice.
   app.post('/api/setup/provider', async (request, reply) => {
-    const body = request.body as { provider?: Provider; ollamaBaseUrl?: string; ollamaModel?: string };
-    const provider: Provider = body.provider === 'ollama' ? 'ollama' : 'anthropic';
+    const body = request.body as { provider?: Provider; ollamaBaseUrl?: string; ollamaModel?: string; openaiModel?: string };
+    const provider: Provider = body.provider === 'ollama' ? 'ollama' : body.provider === 'openai' ? 'openai' : 'anthropic';
+
+    if (provider === 'openai') {
+      if (!openaiAuth.isConfigured()) {
+        return reply.status(400).send({ error: 'Sign in with ChatGPT first, or set OPENAI_API_KEY in .env.' });
+      }
+      const model = (body.openaiModel ?? '').trim() || getRouting().openaiModel;
+      const saved = setRouting({ provider, openaiModel: model });
+      return reply.send({ ok: true, provider: saved.provider, openaiModel: saved.openaiModel });
+    }
 
     if (provider === 'ollama') {
       const baseUrl = normalizeBaseUrl(body.ollamaBaseUrl ?? getRouting().ollamaBaseUrl);
@@ -167,5 +184,46 @@ export async function setupRoutes(app: FastifyInstance) {
 
     const saved = setRouting({ provider: 'anthropic' });
     return reply.send({ ok: true, provider: saved.provider });
+  });
+
+  // ─────────────────────────────────────────────────────────────────────
+  // OpenAI account — ChatGPT sign-in (Codex OAuth) or OPENAI_API_KEY
+  // ─────────────────────────────────────────────────────────────────────
+
+  app.get('/api/setup/openai/status', async (_req, reply) => reply.send(openaiAuth.getAuthStatus()));
+
+  // Begins the PKCE flow. The HUD opens `url`; the callback lands on this
+  // machine's :1455 (or the operator pastes the URL back from another device).
+  app.post('/api/setup/openai/login/start', async (_req, reply) => {
+    const r = await openaiAuth.startLogin();
+    log.info(`OpenAI sign-in started (${r.listening ? 'listening on ' + r.redirectUri : 'paste-back only'})`);
+    return reply.send(r);
+  });
+
+  app.get('/api/setup/openai/login/status', async (_req, reply) => reply.send(openaiAuth.loginStatus()));
+
+  app.post('/api/setup/openai/login/complete', async (request, reply) => {
+    const body = request.body as { url?: string };
+    const r = await openaiAuth.completeLoginFromUrl(body.url ?? '');
+    return reply.status(r.ok ? 200 : 400).send(r);
+  });
+
+  app.post('/api/setup/openai/import', async (_req, reply) => {
+    const t = openaiAuth.importFromCodex();
+    if (!t) return reply.status(404).send({ error: 'No Codex CLI sign-in found at ~/.codex/auth.json — run `codex login` there, or sign in here.' });
+    return reply.send({ ok: true, status: openaiAuth.getAuthStatus() });
+  });
+
+  app.post('/api/setup/openai/logout', async (_req, reply) => {
+    openaiAuth.signOut();
+    if (getRouting().provider === 'openai' && !openaiAuth.isConfigured()) setRouting({ provider: 'anthropic' });
+    return reply.send({ ok: true, status: openaiAuth.getAuthStatus() });
+  });
+
+  app.get('/api/setup/openai/models', async (_req, reply) => {
+    if (!openaiAuth.isConfigured()) return reply.status(412).send({ error: 'Not signed in.' });
+    const r = await listOpenAIModels();
+    if (r.source === 'remote') setRouting({ openaiModelsCache: r.models });
+    return reply.send(r);
   });
 }

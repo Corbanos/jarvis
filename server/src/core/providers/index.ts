@@ -1,5 +1,5 @@
 /**
- * One streaming call, either provider.
+ * One streaming call, any provider.
  *
  * Both backends return Anthropic-shaped content blocks, so the agentic loops in
  * jarvis.ts and agent-pool.ts stay provider-agnostic: they push `content` onto
@@ -8,6 +8,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { getRouting } from '../model-routing.js';
 import { streamOllama, type ProviderResult } from './ollama.js';
+import { streamOpenAI } from './openai.js';
 
 export type { ProviderResult } from './ollama.js';
 
@@ -26,6 +27,7 @@ export interface StreamChatOpts {
 export function effectiveModel(requested: string): string {
   const r = getRouting();
   if (r.provider === 'ollama' && r.ollamaBaseUrl && r.ollamaModel) return r.ollamaModel;
+  if (r.provider === 'openai') return r.openaiModel;
   return requested;
 }
 
@@ -63,6 +65,18 @@ export async function streamChat(opts: StreamChatOpts): Promise<ProviderResult> 
     return streamOllama({
       baseUrl: r.ollamaBaseUrl,
       model: r.ollamaModel,
+      system: opts.system,
+      messages: opts.messages,
+      tools: opts.tools,
+      ...(opts.maxTokens !== undefined ? { maxTokens: opts.maxTokens } : {}),
+      ...(opts.onText ? { onText: opts.onText } : {}),
+      ...(opts.signal ? { signal: opts.signal } : {}),
+    });
+  }
+
+  if (r.provider === 'openai') {
+    return streamOpenAI({
+      model: r.openaiModel,
       system: opts.system,
       messages: opts.messages,
       tools: opts.tools,

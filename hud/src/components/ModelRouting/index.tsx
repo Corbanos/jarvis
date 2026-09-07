@@ -4,7 +4,18 @@ import { authFetch } from '@/lib/auth';
 
 const API = process.env['NEXT_PUBLIC_JARVIS_API'] ?? 'http://localhost:7777';
 
-type Provider = 'anthropic' | 'ollama';
+type Provider = 'anthropic' | 'ollama' | 'openai';
+
+interface OpenAIStatus {
+  configured: boolean;
+  source: 'chatgpt' | 'apikey' | null;
+  email: string | null;
+  plan: string | null;
+  importedFrom: 'codex' | null;
+  codexLoginAvailable: boolean;
+  apiKeyPresent: boolean;
+  login: { pending: boolean; done: boolean; error: string | null };
+}
 
 interface OllamaModel {
   name: string;
@@ -28,7 +39,7 @@ export function ModelRoutingButton() {
     <>
       <button
         onClick={() => setOpen(true)}
-        title="Model routing — Anthropic or a local Ollama host"
+        title="Model routing — Anthropic, OpenAI (ChatGPT sign-in), or a local Ollama host"
         style={{
           background: 'transparent',
           border: '1px solid rgba(0,229,255,0.25)',
@@ -60,17 +71,30 @@ function ModelRoutingPanel({ onClose }: { onClose: () => void }) {
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [anthropicConfigured, setAnthropicConfigured] = useState(true);
+  const [openai, setOpenai] = useState<OpenAIStatus | null>(null);
+  const [openaiModel, setOpenaiModel] = useState('gpt-6-astra');
+  const [openaiModels, setOpenaiModels] = useState<string[]>([]);
+  const [customModel, setCustomModel] = useState('');
+  const [pasteUrl, setPasteUrl] = useState('');
+  const [signingIn, setSigningIn] = useState(false);
+
+  const loadOpenaiStatus = useCallback(() => {
+    authFetch(`${API}/api/setup/openai/status`).then((r) => r.json()).then((d: OpenAIStatus) => setOpenai(d)).catch(() => {});
+  }, []);
 
   // Load saved routing. The cached model list means the picker is populated
   // even if the Ollama box is asleep right now.
   useEffect(() => {
     authFetch(`${API}/api/setup/provider`)
       .then((r) => r.json())
-      .then((d: { provider: Provider; ollamaBaseUrl: string; ollamaModel: string; models: string[]; anthropicConfigured: boolean }) => {
+      .then((d: { provider: Provider; ollamaBaseUrl: string; ollamaModel: string; models: string[]; anthropicConfigured: boolean; openaiModel?: string; openaiModels?: string[]; openai?: OpenAIStatus }) => {
         setProvider(d.provider ?? 'anthropic');
         setHost(d.ollamaBaseUrl ?? '');
         setModel(d.ollamaModel ?? '');
         setAnthropicConfigured(!!d.anthropicConfigured);
+        if (d.openaiModel) setOpenaiModel(d.openaiModel);
+        if (d.openaiModels?.length) setOpenaiModels(d.openaiModels);
+        if (d.openai) setOpenai(d.openai);
         if (d.models?.length) {
           setModels(d.models.map((n) => ({ name: n, size: 0, family: '', parameterSize: '', quantization: '' })));
         }
@@ -109,6 +133,73 @@ function ModelRoutingPanel({ onClose }: { onClose: () => void }) {
     }
   }, [host, model]);
 
+  // Opens the popup synchronously so browsers don't block it, then points it at
+  // the authorize URL once the server has prepared the PKCE challenge. Polls
+  // until the callback (or a paste-back) finishes the sign-in.
+  const signIn = useCallback(async () => {
+    setError(''); setNotice('');
+    const popup = window.open('', '_blank');
+    setSigningIn(true);
+    try {
+      const res = await authFetch(`${API}/api/setup/openai/login/start`, { method: 'POST' });
+      const d = (await res.json()) as { url: string; listening: boolean };
+      if (popup) popup.location.href = d.url; else window.open(d.url, '_blank');
+      setNotice(d.listening
+        ? 'Finish signing in with ChatGPT in the new tab. This panel updates on its own.'
+        : 'Finish signing in, then paste the address the browser lands on below.');
+      const started = Date.now();
+      const poll = async () => {
+        if (Date.now() - started > 10 * 60_000) { setSigningIn(false); return; }
+        const st = await authFetch(`${API}/api/setup/openai/login/status`).then((r) => r.json() as Promise<{ pending: boolean; done: boolean; error: string | null }>).catch(() => null);
+        if (st?.done) { setSigningIn(false); setNotice('Signed in with ChatGPT.'); loadOpenaiStatus(); void loadOpenaiModels(); return; }
+        if (st && !st.pending) { setSigningIn(false); if (st.error) setError(st.error); return; }
+        setTimeout(() => { void poll(); }, 2000);
+      };
+      void poll();
+    } catch {
+      popup?.close();
+      setSigningIn(false);
+      setError('Could not start the sign-in.');
+    }
+  }, [loadOpenaiStatus]);
+
+  const completeFromPaste = useCallback(async () => {
+    if (!pasteUrl.trim()) return;
+    setError(''); setNotice('');
+    const res = await authFetch(`${API}/api/setup/openai/login/complete`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url: pasteUrl.trim() }),
+    });
+    const d = (await res.json()) as { ok: boolean; email?: string | null; error?: string };
+    if (!d.ok) { setError(d.error ?? 'Sign-in failed.'); return; }
+    setPasteUrl(''); setSigningIn(false);
+    setNotice(`Signed in${d.email ? ` as ${d.email}` : ''}.`);
+    loadOpenaiStatus(); void loadOpenaiModels();
+  }, [pasteUrl, loadOpenaiStatus]);
+
+  const importCodex = useCallback(async () => {
+    setError(''); setNotice('');
+    const res = await authFetch(`${API}/api/setup/openai/import`, { method: 'POST' });
+    const d = (await res.json()) as { ok?: boolean; error?: string; status?: OpenAIStatus };
+    if (!res.ok || !d.ok) { setError(d.error ?? 'Import failed.'); return; }
+    if (d.status) setOpenai(d.status);
+    setNotice(`Imported the Codex CLI sign-in${d.status?.email ? ` (${d.status.email})` : ''}.`);
+    void loadOpenaiModels();
+  }, []);
+
+  const signOut = useCallback(async () => {
+    const res = await authFetch(`${API}/api/setup/openai/logout`, { method: 'POST' });
+    const d = (await res.json()) as { status?: OpenAIStatus };
+    if (d.status) setOpenai(d.status);
+    setNotice('Signed out of ChatGPT.');
+  }, []);
+
+  const loadOpenaiModels = useCallback(async () => {
+    const res = await authFetch(`${API}/api/setup/openai/models`).catch(() => null);
+    if (!res?.ok) return;
+    const d = (await res.json()) as { models: string[] };
+    if (d.models?.length) setOpenaiModels(d.models);
+  }, []);
+
   const apply = useCallback(async () => {
     setSaving(true);
     setError('');
@@ -117,7 +208,7 @@ function ModelRoutingPanel({ onClose }: { onClose: () => void }) {
       const res = await authFetch(`${API}/api/setup/provider`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ provider, ollamaBaseUrl: host, ollamaModel: model }),
+        body: JSON.stringify({ provider, ollamaBaseUrl: host, ollamaModel: model, openaiModel: (customModel.trim() || openaiModel) }),
       });
       const d = (await res.json()) as { ok?: boolean; error?: string };
       if (!res.ok || !d.ok) { setError(d.error ?? 'Could not save routing.'); return; }
@@ -128,7 +219,7 @@ function ModelRoutingPanel({ onClose }: { onClose: () => void }) {
     } finally {
       setSaving(false);
     }
-  }, [provider, host, model, onClose]);
+  }, [provider, host, model, openaiModel, customModel, onClose]);
 
   return (
     <div
@@ -176,6 +267,12 @@ function ModelRoutingPanel({ onClose }: { onClose: () => void }) {
                 sub={anthropicConfigured ? 'API key set' : 'no API key'}
               />
               <Segment
+                active={provider === 'openai'}
+                onClick={() => { setProvider('openai'); if (!openai) loadOpenaiStatus(); }}
+                label="OPENAI"
+                sub={openai?.configured ? (openai.source === 'chatgpt' ? (openai.email ?? 'ChatGPT signed in') : 'API key set') : 'ChatGPT sign-in'}
+              />
+              <Segment
                 active={provider === 'ollama'}
                 onClick={() => setProvider('ollama')}
                 label="OLLAMA"
@@ -183,6 +280,85 @@ function ModelRoutingPanel({ onClose }: { onClose: () => void }) {
               />
             </div>
           </Section>
+
+          {provider === 'openai' && (
+            <>
+              <Section title="ACCOUNT" hint="Sign in with ChatGPT to use your subscription through the Codex backend, exactly as the Codex CLI does. Or set OPENAI_API_KEY in .env for the pay-per-token API.">
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  <div style={{ fontSize: 11, color: openai?.configured ? 'var(--accent-green)' : 'var(--text-dim)', lineHeight: 1.6 }}>
+                    {openai === null && 'Checking…'}
+                    {openai && !openai.configured && '○ Not signed in'}
+                    {openai?.configured && openai.source === 'chatgpt' && (
+                      <>● Signed in{openai.email ? ` as ${openai.email}` : ''}{openai.plan ? ` · ${openai.plan}` : ''}{openai.importedFrom === 'codex' ? ' · from Codex CLI' : ''}</>
+                    )}
+                    {openai?.configured && openai.source === 'apikey' && '● Using OPENAI_API_KEY from .env'}
+                  </div>
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                    {openai?.source !== 'chatgpt' && (
+                      <button onClick={() => void signIn()} disabled={signingIn} style={{ ...btnStyle, color: 'var(--accent-primary)', borderColor: 'rgba(0,229,255,0.4)', background: 'rgba(0,229,255,0.08)', opacity: signingIn ? 0.5 : 1 }}>
+                        {signingIn ? 'WAITING FOR BROWSER…' : 'SIGN IN WITH CHATGPT'}
+                      </button>
+                    )}
+                    {openai?.codexLoginAvailable && openai.source !== 'chatgpt' && (
+                      <button onClick={() => void importCodex()} style={{ ...btnStyle, color: 'var(--accent-primary)', borderColor: 'rgba(0,229,255,0.3)' }}>
+                        USE CODEX CLI LOGIN
+                      </button>
+                    )}
+                    {openai?.source === 'chatgpt' && (
+                      <button onClick={() => void signOut()} style={{ ...btnStyle, color: 'var(--accent-red)', borderColor: 'rgba(255,34,68,0.3)' }}>
+                        SIGN OUT
+                      </button>
+                    )}
+                  </div>
+                  {signingIn && (
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      <input
+                        value={pasteUrl}
+                        onChange={(e) => setPasteUrl(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === 'Enter') void completeFromPaste(); }}
+                        placeholder="On another device? Paste the localhost:1455/… address the browser lands on"
+                        spellCheck={false}
+                        style={inputStyle}
+                      />
+                      <button onClick={() => void completeFromPaste()} disabled={!pasteUrl.trim()} style={{ ...btnStyle, color: 'var(--accent-primary)', borderColor: 'rgba(0,229,255,0.4)', opacity: pasteUrl.trim() ? 1 : 0.4, whiteSpace: 'nowrap' }}>
+                        FINISH
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </Section>
+
+              {openai?.configured && (
+                <Section title="MODEL" hint="Models available to this account. Tool-calling is required — Jarvis drives its HUD through tools. Type an id the list doesn't show if you know it.">
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4, maxHeight: 200, overflowY: 'auto', border: '1px solid rgba(0,229,255,0.15)', borderRadius: 3, padding: 4 }}>
+                    {(openaiModels.length ? openaiModels : [openaiModel]).map((m) => (
+                      <button
+                        key={m}
+                        onClick={() => { setOpenaiModel(m); setCustomModel(''); }}
+                        style={{
+                          display: 'flex', alignItems: 'center', gap: 10,
+                          background: openaiModel === m && !customModel ? 'rgba(0,229,255,0.12)' : 'transparent',
+                          border: `1px solid ${openaiModel === m && !customModel ? 'rgba(0,229,255,0.5)' : 'transparent'}`,
+                          borderRadius: 3, padding: '7px 10px',
+                          color: openaiModel === m && !customModel ? 'var(--accent-bright)' : 'var(--text-primary)',
+                          fontFamily: 'inherit', fontSize: 11, cursor: 'pointer', textAlign: 'left',
+                        }}
+                      >
+                        {openaiModel === m && !customModel ? '● ' : '○ '}{m}
+                      </button>
+                    ))}
+                  </div>
+                  <input
+                    value={customModel}
+                    onChange={(e) => setCustomModel(e.target.value)}
+                    placeholder="or type a model id…"
+                    spellCheck={false}
+                    style={{ ...inputStyle, marginTop: 8, width: '100%' }}
+                  />
+                </Section>
+              )}
+            </>
+          )}
 
           {provider === 'ollama' && (
             <>
@@ -272,13 +448,13 @@ function ModelRoutingPanel({ onClose }: { onClose: () => void }) {
           </button>
           <button
             onClick={() => void apply()}
-            disabled={saving || (provider === 'ollama' && (!host || !model))}
+            disabled={saving || (provider === 'ollama' && (!host || !model)) || (provider === 'openai' && !openai?.configured)}
             style={{
               ...btnStyle,
               color: 'var(--accent-primary)',
               borderColor: 'rgba(0,229,255,0.4)',
               background: 'rgba(0,229,255,0.08)',
-              opacity: saving || (provider === 'ollama' && (!host || !model)) ? 0.4 : 1,
+              opacity: saving || (provider === 'ollama' && (!host || !model)) || (provider === 'openai' && !openai?.configured) ? 0.4 : 1,
             }}
           >
             {saving ? 'APPLYING…' : 'APPLY'}

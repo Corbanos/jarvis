@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { getRouting, setRouting, usingOllama } from '../core/model-routing.js';
+import { CURATED_OPENAI_MODELS } from '../core/providers/openai.js';
 
 export async function agentRoutes(app: FastifyInstance) {
   // List all agents (running + historical)
@@ -87,6 +88,14 @@ export async function agentRoutes(app: FastifyInstance) {
         host: r.ollamaBaseUrl,
       });
     }
+    if (r.provider === 'openai') {
+      const known = r.openaiModelsCache.length ? r.openaiModelsCache : CURATED_OPENAI_MODELS;
+      return reply.send({
+        current: r.openaiModel,
+        available: known.includes(r.openaiModel) ? known : [r.openaiModel, ...known],
+        provider: 'openai',
+      });
+    }
     return reply.send({
       current: app.agentPool.getModel(),
       available: app.agentPool.getAvailableModels(),
@@ -113,6 +122,13 @@ export async function agentRoutes(app: FastifyInstance) {
         provider: 'ollama',
         message: `Ollama model set to ${body.model} for Jarvis and all future agents`,
       });
+    }
+
+    // OpenAI model ids aren't validated against a fixed list — the account's
+    // set varies and the operator may type one the picker didn't know.
+    if (getRouting().provider === 'openai') {
+      setRouting({ openaiModel: body.model.trim() });
+      return reply.send({ success: true, model: body.model.trim(), provider: 'openai', message: `OpenAI model set to ${body.model.trim()}` });
     }
 
     const valid = app.agentPool.setModel(body.model);

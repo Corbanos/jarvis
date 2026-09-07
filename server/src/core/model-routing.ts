@@ -10,11 +10,12 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
 import { log } from './logger.js';
+import { isConfigured as openaiConfigured } from './openai-auth.js';
 
 const CONFIG_DIR = join(homedir(), '.jarvis');
 const CONFIG_FILE = join(CONFIG_DIR, 'config.json');
 
-export type Provider = 'anthropic' | 'ollama';
+export type Provider = 'anthropic' | 'ollama' | 'openai';
 
 export interface ModelRouting {
   provider: Provider;
@@ -26,6 +27,9 @@ export interface ModelRouting {
    * operator re-probes to refresh it.
    */
   ollamaModelsCache: string[];
+  /** OpenAI model id, used with ChatGPT sign-in or OPENAI_API_KEY. */
+  openaiModel: string;
+  openaiModelsCache: string[];
 }
 
 const DEFAULTS: ModelRouting = {
@@ -33,6 +37,8 @@ const DEFAULTS: ModelRouting = {
   ollamaBaseUrl: '',
   ollamaModel: '',
   ollamaModelsCache: [],
+  openaiModel: 'gpt-6-astra', // the Codex backend's top-priority model as of 2026-09
+  openaiModelsCache: [],
 };
 
 function readFile(): Record<string, unknown> {
@@ -51,10 +57,12 @@ export function getRouting(): ModelRouting {
   const cfg = readFile();
   const raw = (cfg['modelRouting'] ?? {}) as Partial<ModelRouting>;
   cached = {
-    provider: raw.provider === 'ollama' ? 'ollama' : 'anthropic',
+    provider: raw.provider === 'ollama' ? 'ollama' : raw.provider === 'openai' ? 'openai' : 'anthropic',
     ollamaBaseUrl: typeof raw.ollamaBaseUrl === 'string' ? raw.ollamaBaseUrl : '',
     ollamaModel: typeof raw.ollamaModel === 'string' ? raw.ollamaModel : '',
     ollamaModelsCache: Array.isArray(raw.ollamaModelsCache) ? raw.ollamaModelsCache : [],
+    openaiModel: typeof raw.openaiModel === 'string' && raw.openaiModel ? raw.openaiModel : DEFAULTS.openaiModel,
+    openaiModelsCache: Array.isArray(raw.openaiModelsCache) ? raw.openaiModelsCache : [],
   };
   // Env override wins, for headless boxes provisioned by config management.
   const envUrl = process.env['JARVIS_OLLAMA_URL'];
@@ -78,7 +86,9 @@ export function setRouting(patch: Partial<ModelRouting>): ModelRouting {
   log.info(
     next.provider === 'ollama'
       ? `Model routing → Ollama ${next.ollamaBaseUrl} (${next.ollamaModel || 'no model selected'})`
-      : 'Model routing → Anthropic'
+      : next.provider === 'openai'
+        ? `Model routing → OpenAI (${next.openaiModel})`
+        : 'Model routing → Anthropic'
   );
   return next;
 }
@@ -87,4 +97,9 @@ export function setRouting(patch: Partial<ModelRouting>): ModelRouting {
 export function usingOllama(): boolean {
   const r = getRouting();
   return r.provider === 'ollama' && !!r.ollamaBaseUrl && !!r.ollamaModel;
+}
+
+/** True only when OpenAI is selected AND a ChatGPT sign-in or API key exists. */
+export function usingOpenAI(): boolean {
+  return getRouting().provider === 'openai' && openaiConfigured();
 }
