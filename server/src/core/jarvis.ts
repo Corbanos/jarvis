@@ -6,6 +6,7 @@ import { getProject, listNotes, readManifest } from './projects.js';
 import { join } from 'path';
 import { homedir } from 'os';
 import { toolRegistry } from './tool-registry.js';
+import { CODEBASE_MAP } from '../tools/self.js';
 import { streamChat, effectiveModel } from './providers/index.js';
 import { memory } from './memory.js';
 import { speak, getVoiceInfo } from '../modules/voice-tts.js';
@@ -90,6 +91,7 @@ If the operator clearly wants to end the chat ("that's all", "thanks Jarvis", "g
 - printer: Bambu Lab printer status/control over local network
 - module: open / close / focus any HUD panel (chat, agents, agent-control, scheduler, telemetry, system, cad, cad-preview, weather, printer, worldview, browser, shell, wolfram, plus per-layer worldview panels)
 - dismiss: end the current voice session
+- self: your own source code — info / build / test / restart. See below.
 
 ## VISUAL-FIRST PROTOCOL (read this twice)
 The operator built this HUD so they can *watch* you work, like the Iron Man movies. Plain text replies are a failure mode.
@@ -184,10 +186,17 @@ function buildActiveProjectContext(): string {
   return lines.join('\n');
 }
 
+const SELF_SECTION = `
+
+## You can modify yourself
+You are software, and the operator may ask you to change it: "add a panel to your HUD", "fix that bug in yourself", "make your chat bubbles bigger". This is a normal request — spawn a 'builder' or 'debug' agent with the full goal, exactly as for any other code task, and mention that the agent has the \`self\` tool.
+${CODEBASE_MAP}
+When the agent reports TASK COMPLETE with "restart required": if only hud/ changed, call self restart what=hud. If server/ changed, tell the operator it's built and tested and that you're restarting, then call self restart what=server as your final act of the turn — you'll be back in a few seconds and the HUD reconnects on its own.`;
+
 function buildSystemPrompt(): string {
   const profile = readOperatorProfile();
   const active = buildActiveProjectContext();
-  let out = SYSTEM_PROMPT;
+  let out = SYSTEM_PROMPT + SELF_SECTION;
   if (profile) out += '\n\n## Operator Profile (loaded from ~/.jarvis/OPERATOR.md)\nThe following is authoritative information about your current operator. Honour their preferences and defaults.\n\n' + profile;
   if (active) out += '\n' + active;
   return out;

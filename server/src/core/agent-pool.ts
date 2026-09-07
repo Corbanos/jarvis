@@ -4,6 +4,7 @@ import { memory } from './memory.js';
 import { getActiveProjectId } from './active-project.js';
 import { toolRegistry } from './tool-registry.js';
 import { streamChat, effectiveModel } from './providers/index.js';
+import { CODEBASE_MAP } from '../tools/self.js';
 import { log } from './logger.js';
 import type { AgentRecord } from '../types/index.js';
 import type { WSHub } from '../ws.js';
@@ -30,6 +31,10 @@ Large goals are expected to take many turns — dozens is normal. Keep going unt
 - Narrate progress briefly as you work (1-2 sentences per major step), in the same turn as the tool calls that do the work.
 - Use code blocks for code/file contents.
 - End with: "TASK COMPLETE: <one-line summary>" or "TASK FAILED: <reason>" on its own line.
+
+## Working on JARVIS itself
+If the goal is about JARVIS's own code (its HUD, server, tools, panels), you have the 'self' tool: call self info first, edit with filesystem, then self build and self test until green. Do NOT call self restart — end with "TASK COMPLETE: <what changed> — restart required (hud|server)" and the main Jarvis restarts so your completion is recorded.
+${CODEBASE_MAP}
 
 ## Constraints
 - Do NOT spawn further sub-agents (avoid runaway recursion).
@@ -130,19 +135,27 @@ export function createAgentPool(ws: WSHub, deps: AgentPoolDeps = {}) {
     const dbAgents = memory.getAgents();
     for (const row of dbAgents) {
       if (!pool.has(row['id'] as string)) {
+        // A run that was in flight when the process last stopped (a `self
+        // restart`, a crash) has no loop to return to — record that rather
+        // than show it as running forever.
+        const persisted = row['status'] as AgentRecord['status'];
+        const interrupted = persisted === 'running' || persisted === 'spawning';
+        const logs = row['logs'] as string[];
+        if (interrupted) logs.push('[loop] server restarted while this agent was running — not resumed');
         const agent: InternalAgent = {
           id: row['id'] as string,
           goal: row['goal'] as string,
-          status: row['status'] as AgentRecord['status'],
+          status: interrupted ? 'failed' : persisted,
           startedAt: row['started_at'] as number,
           completedAt: row['completed_at'] as number | undefined,
-          logs: row['logs'] as string[],
+          logs,
           model: row['model'] as string | undefined,
           projectId: (row['project_id'] as string | undefined) ?? undefined,
           parentAgentId: (row['parent_agent_id'] as string | undefined) ?? undefined,
           role: (row['role'] as string | undefined) ?? undefined,
           summary: (row['summary'] as string | undefined) ?? undefined,
         };
+        if (interrupted) { agent.completedAt = agent.completedAt ?? Date.now(); memory.saveAgent({ ...agent }); }
         pool.set(agent.id, agent);
       }
     }

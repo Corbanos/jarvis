@@ -19,6 +19,7 @@ import { printerTool, setPrinterBroadcast, setPrinterModuleBroadcast } from './t
 import { moduleTool, setModuleBroadcast } from './tools/module.js';
 import { projectsTool, setProjectsBroadcast } from './tools/projects.js';
 import { wolframTool, setWolframBroadcast } from './tools/wolfram.js';
+import { selfTool } from './tools/self.js';
 import { cadRoutes } from './routes/cad.js';
 import { shellRoutes } from './routes/shell.js';
 import { chatRoutes } from './routes/chat.js';
@@ -86,6 +87,7 @@ async function main() {
   toolRegistry.register(moduleTool);
   toolRegistry.register(projectsTool);
   toolRegistry.register(wolframTool);
+  toolRegistry.register(selfTool);
 
   // ── Wire tool broadcasts to the WS hub ─────────────────────────────
   // Tools that pop a HUD card or module emit through these helpers.
