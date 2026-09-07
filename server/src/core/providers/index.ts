@@ -6,7 +6,7 @@
  * the history and branch on `stop_reason` exactly as before.
  */
 import Anthropic from '@anthropic-ai/sdk';
-import { getRouting } from '../model-routing.js';
+import { getRouting, type Effort } from '../model-routing.js';
 import { streamOllama, type ProviderResult } from './ollama.js';
 import { streamOpenAI } from './openai.js';
 
@@ -31,17 +31,36 @@ export function effectiveModel(requested: string): string {
   return requested;
 }
 
-async function streamAnthropic(opts: StreamChatOpts): Promise<ProviderResult> {
+type AnthropicEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+
+/**
+ * Which effort levels a Claude model accepts. Haiku 4.5 rejects the parameter
+ * (and adaptive thinking); the 4.6 line predates xhigh; everything newer takes
+ * all five. Sending an unsupported level is a 400, so clamp rather than fail.
+ */
+export function anthropicThinkingParams(model: string, effort: Effort): { thinking?: { type: 'adaptive' }; output_config?: { effort: AnthropicEffort } } {
+  if (effort === 'default') return {};
+  if (/haiku/i.test(model)) return {};
+  let level: AnthropicEffort = effort;
+  if (/-4-6/.test(model) && level === 'xhigh') level = 'high';
+  return { thinking: { type: 'adaptive' }, output_config: { effort: level } };
+}
+
+async function streamAnthropic(opts: StreamChatOpts, effort: Effort): Promise<ProviderResult> {
   // Constructed per call rather than at startup: the operator can paste an API
   // key into the setup screen mid-session, and this picks it up immediately.
   const client = new Anthropic({ apiKey: process.env['ANTHROPIC_API_KEY'] });
 
+  const thinking = anthropicThinkingParams(opts.model, effort);
   const stream = client.messages.stream({
     model: opts.model,
-    max_tokens: opts.maxTokens ?? 8192,
+    // Thinking tokens count against max_tokens; give an explicit level room so
+    // a deep think doesn't truncate the visible reply.
+    max_tokens: Math.max(opts.maxTokens ?? 8192, thinking.thinking ? 32_000 : 0),
     system: opts.system,
     tools: opts.tools,
     messages: opts.messages,
+    ...thinking,
   });
 
   if (opts.onText) stream.on('text', (t: string) => opts.onText!(t));
@@ -77,6 +96,7 @@ export async function streamChat(opts: StreamChatOpts): Promise<ProviderResult> 
   if (r.provider === 'openai') {
     return streamOpenAI({
       model: r.openaiModel,
+      effort: r.effort,
       system: opts.system,
       messages: opts.messages,
       tools: opts.tools,
@@ -86,5 +106,5 @@ export async function streamChat(opts: StreamChatOpts): Promise<ProviderResult> 
     });
   }
 
-  return streamAnthropic(opts);
+  return streamAnthropic(opts, r.effort);
 }

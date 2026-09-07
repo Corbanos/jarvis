@@ -4,7 +4,7 @@ import { writeFileSync, readFileSync, existsSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
 import { log } from '../core/logger.js';
-import { getRouting, setRouting, usingOllama, usingOpenAI, type Provider } from '../core/model-routing.js';
+import { getRouting, setRouting, usingOllama, usingOpenAI, EFFORT_LEVELS, type Provider, type Effort } from '../core/model-routing.js';
 import * as openaiAuth from '../core/openai-auth.js';
 import { listOpenAIModels, CURATED_OPENAI_MODELS } from '../core/providers/openai.js';
 import { probeOllama, normalizeBaseUrl } from '../core/providers/ollama.js';
@@ -128,6 +128,8 @@ export async function setupRoutes(app: FastifyInstance) {
       openaiModel: r.openaiModel,
       openaiModels: r.openaiModelsCache.length ? r.openaiModelsCache : CURATED_OPENAI_MODELS,
       openai: openaiAuth.getAuthStatus(),
+      effort: r.effort,
+      effortLevels: EFFORT_LEVELS,
       active: usingOllama() ? 'ollama' : usingOpenAI() ? 'openai' : 'anthropic',
       anthropicConfigured: !!getApiKey(),
     });
@@ -152,8 +154,13 @@ export async function setupRoutes(app: FastifyInstance) {
 
   // Commit a routing choice.
   app.post('/api/setup/provider', async (request, reply) => {
-    const body = request.body as { provider?: Provider; ollamaBaseUrl?: string; ollamaModel?: string; openaiModel?: string };
+    const body = request.body as { provider?: Provider; ollamaBaseUrl?: string; ollamaModel?: string; openaiModel?: string; effort?: Effort };
     const provider: Provider = body.provider === 'ollama' ? 'ollama' : body.provider === 'openai' ? 'openai' : 'anthropic';
+    // Effort is provider-agnostic; commit it whatever else happens below.
+    if (body.effort !== undefined) {
+      if (!EFFORT_LEVELS.includes(body.effort)) return reply.status(400).send({ error: `effort must be one of ${EFFORT_LEVELS.join(', ')}` });
+      setRouting({ effort: body.effort });
+    }
 
     if (provider === 'openai') {
       if (!openaiAuth.isConfigured()) {

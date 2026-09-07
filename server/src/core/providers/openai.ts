@@ -190,15 +190,34 @@ export async function parseResponsesSSE(body: ReadableStream<Uint8Array>, onText
 
 // ── The call ──────────────────────────────────────────────────────────────
 
+export type OpenAIEffort = 'default' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+
 export interface OpenAIStreamOpts {
   model: string;
   system: string;
   messages: Anthropic.MessageParam[];
   tools: Anthropic.Tool[];
   maxTokens?: number;
+  effort?: OpenAIEffort;
   onText?: (t: string) => void;
   signal?: AbortSignal;
   fetch?: typeof fetch;
+}
+
+// Reasoning levels each Codex model accepts, learned from the model list.
+// Unknown models are sent the level as-is; the backend explains a bad one.
+const reasoningLevelsBySlug = new Map<string, string[]>();
+
+/** Clamp a requested level to what the model supports (nearest lower, else its highest). */
+export function clampOpenAIEffort(model: string, effort: OpenAIEffort): string | null {
+  if (effort === 'default') return null;
+  const supported = reasoningLevelsBySlug.get(model);
+  if (!supported?.length) return effort;
+  if (supported.includes(effort)) return effort;
+  const order = ['low', 'medium', 'high', 'xhigh', 'max'];
+  const want = order.indexOf(effort);
+  for (let i = want; i >= 0; i--) if (supported.includes(order[i]!)) return order[i]!;
+  return supported[supported.length - 1]!;
 }
 
 async function describeHttpError(res: Response, source: string): Promise<string> {
@@ -228,8 +247,21 @@ export function buildResponsesBody(opts: OpenAIStreamOpts, source: 'chatgpt' | '
     stream: true,
     ...(reasoning ? { include: ['reasoning.encrypted_content'] } : {}),
     ...(source === 'apikey' && opts.maxTokens ? { max_output_tokens: opts.maxTokens } : {}),
-    ...(source === 'apikey' && reasoning ? { reasoning: { effort: 'medium', summary: 'auto' } } : {}),
+    ...reasoningParam(opts, source, reasoning),
   };
+}
+
+/**
+ * An explicit level goes to both backends as `reasoning.effort` (the Codex
+ * backend advertises per-model levels, so it's clamped to those). Left at
+ * default, the Codex backend applies its own per-model choice; the platform
+ * API gets the previous medium-with-summary.
+ */
+function reasoningParam(opts: OpenAIStreamOpts, source: 'chatgpt' | 'apikey', reasoning: boolean): Record<string, unknown> {
+  if (!reasoning) return {};
+  const level = clampOpenAIEffort(opts.model, opts.effort ?? 'default');
+  if (level) return { reasoning: source === 'apikey' ? { effort: level, summary: 'auto' } : { effort: level } };
+  return source === 'apikey' ? { reasoning: { effort: 'medium', summary: 'auto' } } : {};
 }
 
 export async function streamOpenAI(opts: OpenAIStreamOpts): Promise<ProviderResult> {
@@ -271,10 +303,14 @@ export async function streamOpenAI(opts: OpenAIStreamOpts): Promise<ProviderResu
 
 // ── Model list ────────────────────────────────────────────────────────────
 
-interface CodexModel { slug?: string; visibility?: string; priority?: number; display_name?: string }
+interface CodexModel { slug?: string; visibility?: string; priority?: number; display_name?: string; supported_reasoning_levels?: Array<{ effort?: string }> }
 
 /** Pure: the Codex backend's list → operator-facing ids, hidden ones dropped, in the backend's priority order. */
 export function pickCodexModels(models: CodexModel[]): string[] {
+  for (const m of models) {
+    const levels = (m.supported_reasoning_levels ?? []).map((l) => l.effort).filter((e): e is string => typeof e === 'string');
+    if (m.slug && levels.length) reasoningLevelsBySlug.set(m.slug, levels);
+  }
   return models
     .filter((m) => typeof m.slug === 'string' && (m.visibility ?? 'list') === 'list')
     .sort((a, b) => (a.priority ?? 999) - (b.priority ?? 999))

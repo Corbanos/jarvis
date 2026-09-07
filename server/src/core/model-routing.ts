@@ -17,6 +17,10 @@ const CONFIG_FILE = join(CONFIG_DIR, 'config.json');
 
 export type Provider = 'anthropic' | 'ollama' | 'openai';
 
+/** 'default' leaves each provider's own behaviour alone; anything else is sent explicitly. */
+export type Effort = 'default' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+export const EFFORT_LEVELS: readonly Effort[] = ['default', 'low', 'medium', 'high', 'xhigh', 'max'];
+
 export interface ModelRouting {
   provider: Provider;
   ollamaBaseUrl: string;
@@ -30,6 +34,8 @@ export interface ModelRouting {
   /** OpenAI model id, used with ChatGPT sign-in or OPENAI_API_KEY. */
   openaiModel: string;
   openaiModelsCache: string[];
+  /** Thinking depth, applied to whichever provider is live. */
+  effort: Effort;
 }
 
 const DEFAULTS: ModelRouting = {
@@ -39,6 +45,7 @@ const DEFAULTS: ModelRouting = {
   ollamaModelsCache: [],
   openaiModel: 'gpt-6-astra', // the Codex backend's top-priority model as of 2026-09
   openaiModelsCache: [],
+  effort: 'default',
 };
 
 function readFile(): Record<string, unknown> {
@@ -63,6 +70,7 @@ export function getRouting(): ModelRouting {
     ollamaModelsCache: Array.isArray(raw.ollamaModelsCache) ? raw.ollamaModelsCache : [],
     openaiModel: typeof raw.openaiModel === 'string' && raw.openaiModel ? raw.openaiModel : DEFAULTS.openaiModel,
     openaiModelsCache: Array.isArray(raw.openaiModelsCache) ? raw.openaiModelsCache : [],
+    effort: EFFORT_LEVELS.includes(raw.effort as Effort) ? (raw.effort as Effort) : 'default',
   };
   // Env override wins, for headless boxes provisioned by config management.
   const envUrl = process.env['JARVIS_OLLAMA_URL'];

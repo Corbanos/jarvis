@@ -189,3 +189,20 @@ test('HTTP errors are explained rather than dumped', async () => {
     /429.*usage cap reached/,
   );
 });
+
+test('an explicit thinking level reaches both backends, clamped to what the Codex model supports', async () => {
+  const { buildResponsesBody, clampOpenAIEffort, pickCodexModels } = await import('./openai.js');
+  // Learn levels the way the model list teaches them.
+  pickCodexModels([{ slug: 'gpt-5.4-mini', visibility: 'list', priority: 1, supported_reasoning_levels: [{ effort: 'low' }, { effort: 'medium' }, { effort: 'high' }, { effort: 'xhigh' }] }]);
+
+  assert.equal(clampOpenAIEffort('gpt-5.4-mini', 'max'), 'xhigh', 'max steps down to the highest supported');
+  assert.equal(clampOpenAIEffort('gpt-5.4-mini', 'high'), 'high');
+  assert.equal(clampOpenAIEffort('unknown-model', 'max'), 'max', 'unknown model → sent as-is');
+  assert.equal(clampOpenAIEffort('gpt-5.4-mini', 'default'), null);
+
+  const base = { model: 'gpt-5.4-mini', system: 's', messages: [{ role: 'user' as const, content: 'x' }], tools: [] };
+  assert.deepEqual(buildResponsesBody({ ...base, effort: 'max' }, 'chatgpt')['reasoning'], { effort: 'xhigh' });
+  assert.deepEqual(buildResponsesBody({ ...base, effort: 'high' }, 'apikey')['reasoning'], { effort: 'high', summary: 'auto' });
+  assert.equal('reasoning' in buildResponsesBody({ ...base, effort: 'default' }, 'chatgpt'), false, 'default → Codex backend decides');
+  assert.equal('reasoning' in buildResponsesBody({ ...base, model: 'gpt-4.1', effort: 'max' }, 'chatgpt'), false, 'non-reasoning model never gets it');
+});

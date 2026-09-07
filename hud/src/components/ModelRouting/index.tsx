@@ -5,6 +5,16 @@ import { authFetch } from '@/lib/auth';
 const API = process.env['NEXT_PUBLIC_JARVIS_API'] ?? 'http://localhost:7777';
 
 type Provider = 'anthropic' | 'ollama' | 'openai';
+type Effort = 'default' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+
+const EFFORTS: Array<{ id: Effort; label: string; blurb: string }> = [
+  { id: 'default', label: 'AUTO',   blurb: "The provider's own default for the chosen model." },
+  { id: 'low',     label: 'LOW',    blurb: 'Fast and terse. Quick lookups, chat, simple tool calls.' },
+  { id: 'medium',  label: 'MEDIUM', blurb: 'Balanced depth and speed for everyday tasks.' },
+  { id: 'high',    label: 'HIGH',   blurb: 'Deeper reasoning for multi-step problems and code.' },
+  { id: 'xhigh',   label: 'X-HIGH', blurb: 'Extra depth for hard agentic work. Slower.' },
+  { id: 'max',     label: 'MAX',    blurb: 'Everything the model has. Correctness over cost and time.' },
+];
 
 interface OpenAIStatus {
   configured: boolean;
@@ -71,6 +81,7 @@ function ModelRoutingPanel({ onClose }: { onClose: () => void }) {
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [anthropicConfigured, setAnthropicConfigured] = useState(true);
+  const [effort, setEffort] = useState<Effort>('default');
   const [openai, setOpenai] = useState<OpenAIStatus | null>(null);
   const [openaiModel, setOpenaiModel] = useState('gpt-6-astra');
   const [openaiModels, setOpenaiModels] = useState<string[]>([]);
@@ -87,7 +98,7 @@ function ModelRoutingPanel({ onClose }: { onClose: () => void }) {
   useEffect(() => {
     authFetch(`${API}/api/setup/provider`)
       .then((r) => r.json())
-      .then((d: { provider: Provider; ollamaBaseUrl: string; ollamaModel: string; models: string[]; anthropicConfigured: boolean; openaiModel?: string; openaiModels?: string[]; openai?: OpenAIStatus }) => {
+      .then((d: { provider: Provider; ollamaBaseUrl: string; ollamaModel: string; models: string[]; anthropicConfigured: boolean; openaiModel?: string; openaiModels?: string[]; openai?: OpenAIStatus; effort?: Effort }) => {
         setProvider(d.provider ?? 'anthropic');
         setHost(d.ollamaBaseUrl ?? '');
         setModel(d.ollamaModel ?? '');
@@ -95,6 +106,7 @@ function ModelRoutingPanel({ onClose }: { onClose: () => void }) {
         if (d.openaiModel) setOpenaiModel(d.openaiModel);
         if (d.openaiModels?.length) setOpenaiModels(d.openaiModels);
         if (d.openai) setOpenai(d.openai);
+        if (d.effort) setEffort(d.effort);
         if (d.models?.length) {
           setModels(d.models.map((n) => ({ name: n, size: 0, family: '', parameterSize: '', quantization: '' })));
         }
@@ -208,7 +220,7 @@ function ModelRoutingPanel({ onClose }: { onClose: () => void }) {
       const res = await authFetch(`${API}/api/setup/provider`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ provider, ollamaBaseUrl: host, ollamaModel: model, openaiModel: (customModel.trim() || openaiModel) }),
+        body: JSON.stringify({ provider, ollamaBaseUrl: host, ollamaModel: model, openaiModel: (customModel.trim() || openaiModel), effort }),
       });
       const d = (await res.json()) as { ok?: boolean; error?: string };
       if (!res.ok || !d.ok) { setError(d.error ?? 'Could not save routing.'); return; }
@@ -219,7 +231,7 @@ function ModelRoutingPanel({ onClose }: { onClose: () => void }) {
     } finally {
       setSaving(false);
     }
-  }, [provider, host, model, openaiModel, customModel, onClose]);
+  }, [provider, host, model, openaiModel, customModel, effort, onClose]);
 
   return (
     <div
@@ -278,6 +290,38 @@ function ModelRoutingPanel({ onClose }: { onClose: () => void }) {
                 label="OLLAMA"
                 sub="local / on-network"
               />
+            </div>
+          </Section>
+
+          <Section title="THINKING" hint={provider === 'ollama'
+            ? 'Ollama models decide this themselves; the setting is kept for when you switch back.'
+            : 'How hard the model thinks before answering. Applies to Jarvis and every agent, on whichever provider is live.'}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, opacity: provider === 'ollama' ? 0.5 : 1 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                <input
+                  type="range"
+                  min={0}
+                  max={EFFORTS.length - 1}
+                  step={1}
+                  value={EFFORTS.findIndex((e) => e.id === effort)}
+                  onChange={(e) => setEffort(EFFORTS[Number(e.target.value)]!.id)}
+                  aria-label="Thinking level"
+                  style={{ flex: 1, accentColor: '#00e5ff' }}
+                />
+                <div style={{ minWidth: 64, textAlign: 'right', color: 'var(--accent-bright)', fontSize: 11, fontWeight: 700, letterSpacing: '0.15em' }}>
+                  {EFFORTS.find((e) => e.id === effort)?.label}
+                </div>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 8, color: 'var(--text-dim)', letterSpacing: '0.1em' }}>
+                {EFFORTS.map((e) => (
+                  <button key={e.id} onClick={() => setEffort(e.id)} style={{ background: 'none', border: 0, padding: 0, cursor: 'pointer', fontFamily: 'inherit', fontSize: 8, letterSpacing: '0.1em', color: effort === e.id ? 'var(--accent-primary)' : 'var(--text-dim)', fontWeight: effort === e.id ? 700 : 400 }}>
+                    {e.label}
+                  </button>
+                ))}
+              </div>
+              <div style={{ fontSize: 9, color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+                {EFFORTS.find((e) => e.id === effort)?.blurb}
+              </div>
             </div>
           </Section>
 
