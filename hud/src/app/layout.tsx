@@ -1,7 +1,6 @@
 import type { Metadata } from 'next';
 import './globals.css';
 import { BuildWatcher } from '@/components/BuildWatcher';
-import { getBuildId } from '@/lib/build-id';
 
 export const metadata: Metadata = {
   title: 'J.A.R.V.I.S.',
@@ -13,7 +12,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en">
       <body suppressHydrationWarning>
         {children}
-        <BuildWatcher initial={getBuildId()} />
+        <BuildWatcher />
       </body>
     </html>
   );

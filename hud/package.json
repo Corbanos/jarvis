@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev -p 3001",
-    "build": "NEXT_DIST_DIR=.next-staging next build",
+    "build": "NEXT_DIST_DIR=.next-staging JARVIS_BUILD_ID=$(node -p \"'b'+Date.now().toString(36)\") next build",
     "start": "next start -p 3001",
     "test": "tsx --test \"src/**/*.test.ts\"",
     "promote": "bash ../deploy/promote-hud.sh"
