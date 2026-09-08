@@ -12,6 +12,7 @@ const MAX_RECONNECT_DELAY = 16000;
 export function useJarvisWS() {
   const ws = useRef<WebSocket | null>(null);
   const reconnectDelay = useRef(500);
+  const everConnected = useRef(false);
 
   const addThinkingToken = useJarvisStore((s) => s.addThinkingToken);
   const addToolCall = useJarvisStore((s) => s.addToolCall);
@@ -38,8 +39,12 @@ export function useJarvisWS() {
       ws.current = socket;
 
       socket.onopen = () => {
+        const isReconnect = everConnected.current;
+        everConnected.current = true;
         reconnectDelay.current = 500;
         setConnected(true);
+        // A reconnect usually means the server restarted — possibly on a new build.
+        if (isReconnect) window.dispatchEvent(new CustomEvent('jarvis-ws-reconnected'));
       };
 
       socket.onmessage = (e) => {
