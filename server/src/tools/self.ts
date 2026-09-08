@@ -49,7 +49,7 @@ export const CODEBASE_MAP = `Repo: ${REPO_ROOT}  (npm workspaces: server/, hud/)
   hud/src/lib/               store.ts (zustand), workspace.ts (module registry), ws-url, auth
   deploy/                    Caddyfile (:80/:443 front door), launchd plists, install scripts
 Runtime: launchd agents com.jarvis.server (:7777) and com.jarvis.hud (:3001), Caddy on :80/:443.
-Ship a change: edit → self build → self test → self restart. Build output: server/dist, hud/.next.`;
+Ship a change: edit → self build → self test → self restart. Build output: server/dist, hud/.next-staging (promoted to .next by restart).`;
 
 function run(cmd: string, args: string[], timeoutMs: number): Promise<{ ok: boolean; output: string }> {
   return new Promise((resolve) => {
@@ -66,11 +66,23 @@ function launchdTarget(label: string): string {
   return `gui/${uid}/${label}`;
 }
 
-/** Schedules a restart of the HUD and/or server after `delayMs`, detached from this process. */
+/**
+ * Schedules a restart after `delayMs`, detached from this process.
+ *
+ * For the HUD this first promotes any staged build (.next-staging → .next) and
+ * kickstarts in the same breath, then clears the previous build. Building into
+ * .next directly would delete chunks under the live server for the whole
+ * build; staging keeps the live HUD untouched until this exact moment.
+ */
 export function scheduleRestart(what: 'server' | 'hud' | 'both', delayMs = 1500): string {
   const labels = what === 'both' ? ['com.jarvis.hud', 'com.jarvis.server'] : [`com.jarvis.${what}`];
-  const cmds = labels.map((l) => `launchctl kickstart -k ${launchdTarget(l)}`).join('; ');
-  const script = `sleep ${Math.max(0.2, delayMs / 1000)}; ${cmds}`;
+  const steps: string[] = [];
+  for (const l of labels) {
+    if (l === 'com.jarvis.hud') steps.push(`bash '${join(REPO_ROOT, 'deploy', 'promote-hud.sh')}'`);
+    steps.push(`launchctl kickstart -k ${launchdTarget(l)}`);
+    if (l === 'com.jarvis.hud') steps.push(`rm -rf '${join(REPO_ROOT, 'hud', '.next-prev')}'`);
+  }
+  const script = `sleep ${Math.max(0.2, delayMs / 1000)}; ${steps.join('; ')}`;
   const child = spawn('/bin/sh', ['-c', script], { detached: true, stdio: 'ignore' });
   child.unref();
   return labels.join(' + ');
@@ -82,7 +94,7 @@ export const selfTool: ToolDefinition = {
 
 Actions:
 - info     → repo path, directory map, git status. Call this FIRST before touching your own code.
-- build    → npm run build (server tsc + hud next build). Returns compiler output. ~30-60s.
+- build    → npm run build (server tsc + hud next build, staged). Returns compiler output. ~30-60s. The live HUD is untouched until restart.
 - test     → npm test across both workspaces.
 - restart  → restart the running services so a built change goes live. Detached, fires ~1.5s later.
              what: "hud" (Next.js only — safe, doesn't interrupt you), "server" or "both" (kills this
@@ -112,8 +124,11 @@ yourselves — the main Jarvis does that so your completion is recorded.`,
         return `${CODEBASE_MAP}\n\nGit:\n${git.output}\n\nRecent commits:\n${head.output}`;
       }
       case 'build': {
+        // Server output lands in server/dist (safe: the running process has its
+        // modules loaded). The HUD build is staged and only goes live on restart.
         const r = await run('npm', ['run', 'build'], 5 * 60_000);
-        return `${r.ok ? 'BUILD OK' : 'BUILD FAILED'}\n${r.output}`;
+        const staged = existsSync(join(REPO_ROOT, 'hud', '.next-staging', 'BUILD_ID'));
+        return `${r.ok ? 'BUILD OK' : 'BUILD FAILED'}${r.ok && staged ? ' — HUD build staged; it goes live on `self restart what=hud`' : ''}\n${r.output}`;
       }
       case 'test': {
         const r = await run('npm', ['test'], 5 * 60_000);

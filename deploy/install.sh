@@ -21,6 +21,7 @@ mkdir -p "$AGENTS" "$LOGS"
 
 echo "→ Building production bundles…"
 ( cd "$REPO" && npm run build )
+bash "$REPO/deploy/promote-hud.sh"
 
 for label in com.jarvis.server com.jarvis.hud com.jarvis.mdns; do
 	cp "$REPO/deploy/$label.plist" "$AGENTS/$label.plist"

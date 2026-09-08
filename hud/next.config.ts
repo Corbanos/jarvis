@@ -3,6 +3,11 @@ import type { NextConfig } from 'next';
 const BACKEND = process.env['JARVIS_BACKEND'] ?? 'http://localhost:7777';
 
 const config: NextConfig = {
+  // Builds go to a staging dir (NEXT_DIST_DIR=.next-staging) and are swapped
+  // into .next atomically alongside the restart. Building straight into .next
+  // while `next start` serves from it deletes chunks under the live server —
+  // every open HUD then fails with ChunkLoadError until it happens to reload.
+  distDir: process.env['NEXT_DIST_DIR'] ?? '.next',
   reactStrictMode: false,
   env: {
     // When same-origin (proxied), use relative URLs
@@ -19,6 +24,8 @@ const config: NextConfig = {
       { source: '/library/:slug', destination: `${BACKEND}/library/:slug/` },
       // Proxy WebSocket
       { source: '/ws', destination: `${BACKEND}/ws` },
+      // Live browser screencast socket (and any future /ws/* subchannels)
+      { source: '/ws/:path*', destination: `${BACKEND}/ws/:path*` },
     ];
   },
 };

@@ -4,9 +4,10 @@
   "private": true,
   "scripts": {
     "dev": "next dev -p 3001",
-    "build": "next build",
+    "build": "NEXT_DIST_DIR=.next-staging next build",
     "start": "next start -p 3001",
-    "test": "tsx --test \"src/**/*.test.ts\""
+    "test": "tsx --test \"src/**/*.test.ts\"",
+    "promote": "bash ../deploy/promote-hud.sh"
   },
   "dependencies": {
     "@react-three/drei": "^10.7.7",
