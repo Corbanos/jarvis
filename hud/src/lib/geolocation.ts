@@ -47,6 +47,7 @@ export const usePreciseLocation = create<PreciseLocationState>((set) => ({
   setState: (state) => set(state),
 }));
 
+let publishQueue: Promise<unknown> = Promise.resolve();
 let watchId: number | null = null;
 let permissionStatus: PermissionStatus | null = null;
 let lastPublished: PublishedFix | null = null;
@@ -79,7 +80,14 @@ export function secureUpgradeUrl(): string | null {
   return `https://${hostname}${pathname}${search}${hash}`;
 }
 
+function revokeLocation(): void {
+  lastPublished = null;
+  update({ accuracyM: null, updatedAt: null });
+  publishQueue = publishQueue.catch(() => {}).then(() => authFetch(`${API}/api/location`, { method: 'DELETE' })).catch(() => {});
+}
+
 function markUnavailable(): void {
+  revokeLocation();
   const upgrade = secureUpgradeUrl();
   update({
     status: 'unavailable',
@@ -95,28 +103,6 @@ async function publishFix(position: GeolocationPosition, includeLabels = false):
     lon: position.coords.longitude,
     accuracyM: Math.round(position.coords.accuracy),
   };
-
-  if (includeLabels) {
-    try {
-      const params = new URLSearchParams({
-        format: 'json',
-        lat: String(position.coords.latitude),
-        lon: String(position.coords.longitude),
-        zoom: '14',
-        'accept-language': 'en',
-      });
-      const response = await fetch(`https://nominatim.openstreetmap.org/reverse?${params}`, {
-        headers: { Accept: 'application/json' },
-        signal: AbortSignal.timeout(5000),
-      });
-      if (response.ok) {
-        const result = await response.json() as { address?: Record<string, string> };
-        const address = result.address ?? {};
-        payload['city'] = address['city'] || address['town'] || address['village'] || address['suburb'] || address['neighbourhood'];
-        payload['region'] = address['state'] || address['region'] || address['province'];
-      }
-    } catch { /* labels are optional; coordinates are already available */ }
-  }
 
   const response = await authFetch(`${API}/api/location`, {
     method: 'POST',
@@ -140,7 +126,8 @@ function handlePosition(position: GeolocationPosition): void {
   lastPublished = { accuracyM, sentAt: now };
   const includeLabels = now - lastReverseGeocodeAt >= REVERSE_GEOCODE_INTERVAL_MS;
   if (includeLabels) lastReverseGeocodeAt = now;
-  void publishFix(position, includeLabels).catch(() => {
+  publishQueue = publishQueue.catch(() => {}).then(() => publishFix(position, includeLabels)).catch(() => {
+    lastPublished = null;
     update({ message: 'Precise location acquired, but the Jarvis server did not accept the update.' });
   });
 }
@@ -148,16 +135,17 @@ function handlePosition(position: GeolocationPosition): void {
 function handlePositionError(error: GeolocationPositionError): void {
   if (error.code === error.PERMISSION_DENIED) {
     stopPreciseLocation();
+    revokeLocation();
     update({
       status: 'denied',
-      message: 'Location is blocked. Allow Location for this site and in macOS Privacy & Security, then retry.',
+      message: "Location is blocked. Allow Location for this site and in this device's Location Services, then retry.",
     });
     return;
   }
   update({
     status: error.code === error.POSITION_UNAVAILABLE ? 'unavailable' : 'error',
     message: error.code === error.TIMEOUT
-      ? 'Location timed out. Check macOS Location Services and retry.'
+      ? "Location timed out. Check this device's Location Services and retry."
       : 'A precise browser location is currently unavailable.',
   });
 }
@@ -226,9 +214,10 @@ export async function initializePreciseLocation(): Promise<void> {
       if (permissionStatus?.state === 'granted') requestPreciseLocation();
       else if (permissionStatus?.state === 'denied') {
         stopPreciseLocation();
+        revokeLocation();
         update({
           status: 'denied',
-          message: 'Location is blocked. Allow Location for this site and in macOS Privacy & Security, then retry.',
+          message: "Location is blocked. Allow Location for this site and in this device's Location Services, then retry.",
         });
       } else if (usePreciseLocation.getState().status !== 'active') {
         update({ status: 'prompt', message: 'Click to allow precise browser location.' });

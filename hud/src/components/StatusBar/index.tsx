@@ -2,7 +2,6 @@
 import { useEffect, useState } from 'react';
 import { useJarvisStore } from '@/lib/store';
 import { requestPreciseLocation, secureUpgradeUrl, usePreciseLocation } from '@/lib/geolocation';
-import { RingGauge } from '@/components/RingGauge';
 import { CodexUsage } from './CodexUsage';
 
 export function StatusBar() {
@@ -11,9 +10,6 @@ export function StatusBar() {
   const [uptime, setUptime] = useState(0);
   const [time, setTime] = useState('');
   const [date, setDate] = useState('');
-  const [cpu, setCpu] = useState(18);
-  const [mem, setMem] = useState(52);
-  const [net, setNet] = useState(12);
 
   useEffect(() => {
     const start = Date.now();
@@ -21,9 +17,7 @@ export function StatusBar() {
       setUptime(Math.floor((Date.now() - start) / 1000));
       setTime(new Date().toLocaleTimeString('en-US', { hour12: false }));
       setDate(new Date().toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }));
-      setCpu(Math.max(5, Math.min(95, cpu + (Math.random() - 0.5) * 8)));
-      setMem(Math.max(30, Math.min(85, mem + (Math.random() - 0.5) * 3)));
-      setNet(Math.max(2, Math.min(80, net + (Math.random() - 0.5) * 15)));
+
     }, 1000);
     return () => clearInterval(t);
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -85,18 +79,13 @@ export function StatusBar() {
         <CodexUsage />
         <div style={{ width: 1, height: 32, background: 'rgba(0,229,255,0.15)' }} />
 
-        <DataChip label="UPTIME" value={fmt(uptime)} />
+        <DataChip label="THIS TAB" value={fmt(uptime)} />
         <DataChip label="AGENTS" value={String(activeAgents)} color={activeAgents > 0 ? 'var(--accent-amber)' : undefined} />
-        <DataChip label="POWER" value="100%" color="var(--accent-green)" />
+
       </div>
 
-      {/* Center: ring gauges */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 16, position: 'absolute', left: '50%', transform: 'translateX(-50%)' }}>
-        <RingGauge label="CPU" value={cpu} size={44} color="#00e5ff" />
-        <RingGauge label="RAM" value={mem} size={44} color="#00e5ff" />
-        <RingGauge label="NET" value={net} size={44} color="#ff8c00" />
-      </div>
-
+      {/* Browsers cannot report system CPU/RAM utilisation or battery reliably.
+          Do not replace missing device telemetry with random or host statistics. */}
       {/* Right: date/time */}
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2 }}>
         <span style={{ fontSize: 20, fontWeight: 700, letterSpacing: '0.1em', color: 'var(--accent-bright)', textShadow: 'var(--glow-soft)', lineHeight: 1 }}>
@@ -145,7 +134,7 @@ function PreciseLocationControl() {
         fontFamily: 'inherit', minWidth: 112,
       }}
     >
-      <span style={{ fontSize: 8, color: 'var(--text-dim)', letterSpacing: '0.2em' }}>LOCATION</span>
+      <span style={{ fontSize: 8, color: 'var(--text-dim)', letterSpacing: '0.2em' }}>THIS DEVICE GPS</span>
       <span style={{ fontSize: 10, color, fontWeight: 700, letterSpacing: '0.08em', textShadow: active ? `0 0 8px ${color}` : undefined }}>
         {value}
       </span>

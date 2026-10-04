@@ -5,6 +5,7 @@ export const browserTool: ToolDefinition = {
   name: 'browser',
   description: `Control Jarvis's own independent browser (Chromium via Playwright).
 Jarvis has a SEPARATE browser window from yours. Use for: web research, filling forms, logging into services, reading pages, Google searches.
+Use directly in main chat for quick/current information and news article verification; short multi-call retrieval is not agent work. This browser runs on the SERVER, not the requesting phone: never use its geolocation or host IP as the operator location.
 The browser is visible on screen — you can watch Jarvis work.`,
   input_schema: {
     type: 'object',

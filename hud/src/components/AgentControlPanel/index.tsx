@@ -66,8 +66,10 @@ export function AgentControlPanel() {
     };
   }, [setAgents, setCurrentModel, setAvailableModels]);
 
-  const activeAgents = agents.filter((a) => a.status === 'running');
-  const historicalAgents = agents.filter((a) => a.status !== 'running');
+  // Paused agents are live work waiting on a resume, so they belong in ACTIVE.
+  const ACTIVE_STATES = ['running', 'spawning', 'paused'];
+  const activeAgents = agents.filter((a) => ACTIVE_STATES.includes(a.status));
+  const historicalAgents = agents.filter((a) => !ACTIVE_STATES.includes(a.status));
   const focusedAgent = agents.find((a) => a.id === focusedAgentId);
 
   const handleModelChange = async (model: string) => {
@@ -405,10 +407,8 @@ function AgentListItem({
   compact: boolean;
 }) {
   const isRunning = agent.status === 'running';
-  const isComplete = agent.status === 'complete';
-  const isFailed = agent.status === 'failed';
 
-  const accent = isRunning ? '#ff8c00' : isComplete ? '#00ff9d' : isFailed ? '#ff3b3b' : '#00e5ff';
+  const accent = statusAccent(agent.status);
   const elapsed = agent.completedAt
     ? `${((agent.completedAt - agent.startedAt) / 1000).toFixed(1)}s`
     : `${Math.floor((Date.now() - agent.startedAt) / 1000)}s`;
@@ -474,18 +474,30 @@ function AgentListItem({
             {agent.goal.slice(0, compact ? 40 : 80)}
           </div>
 
-          {/* Model badge */}
-          {agent.model && (
-            <div style={{
-              fontSize: 7,
-              color: 'var(--text-dim)',
-              marginTop: 3,
-              letterSpacing: '0.1em',
-            }}>
-              {formatModelName(agent.model)}
-            </div>
-          )}
+          {/* Model badge + live status flags */}
+          <div style={{ display: 'flex', gap: 8, marginTop: 3, alignItems: 'center', flexWrap: 'wrap' }}>
+            {agent.model && (
+              <span style={{ fontSize: 7, color: 'var(--text-dim)', letterSpacing: '0.1em' }}>
+                {formatModelName(agent.model)}
+              </span>
+            )}
+            <span style={{ fontSize: 7, color: accent, letterSpacing: '0.15em' }}>{agent.status.toUpperCase()}</span>
+            {agent.pendingControl && (
+              <span style={{ fontSize: 7, color: '#ff8c00', letterSpacing: '0.15em' }}>{String(agent.pendingControl).toUpperCase()} PENDING</span>
+            )}
+            {(agent.resumeCount ?? 0) > 0 && (
+              <span style={{ fontSize: 7, color: 'var(--text-dim)', letterSpacing: '0.15em' }}>RESUMED ×{agent.resumeCount}</span>
+            )}
+            {(agent.pendingInstructions?.length ?? 0) > 0 && (
+              <span style={{ fontSize: 7, color: '#ff8c00', letterSpacing: '0.15em' }}>{agent.pendingInstructions!.length} QUEUED</span>
+            )}
+          </div>
         </div>
+      </div>
+
+      {/* Per-agent controls, live from the WS status */}
+      <div onClick={(e) => e.stopPropagation()} style={{ marginTop: 7, paddingLeft: 14 }}>
+        <AgentControls agent={agent} compact />
       </div>
     </div>
   );
@@ -503,29 +515,21 @@ function AgentDetailPanel({
   const logsEndRef = useRef<HTMLDivElement>(null);
 
   const isRunning = agent.status === 'running';
-  const accent = isRunning ? '#ff8c00' : agent.status === 'complete' ? '#00ff9d' : '#ff3b3b';
+  const accent = statusAccent(agent.status);
 
   // Auto-scroll logs
   useEffect(() => {
     logsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [agent.logs.length, agent.liveText]);
 
-  const handleAbort = async () => {
-    try {
-      await authFetch(`${API}/api/agents/${agent.id}`, { method: 'DELETE' });
-    } catch {
-      // ignore
-    }
-  };
-
   const handleSendInstruction = async () => {
     if (!instruction.trim() || sending) return;
     setSending(true);
     try {
-      await authFetch(`${API}/api/agents/${agent.id}/instruct`, {
+      await authFetch(`${API}/api/agents/${agent.id}/steer`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ instruction: instruction.trim() }),
+        body: JSON.stringify({ message: instruction.trim() }),
       });
       setInstruction('');
     } catch {
@@ -671,7 +675,7 @@ function AgentDetailPanel({
         <div ref={logsEndRef} />
       </div>
 
-      {/* Action Bar */}
+      {/* Action Bar — resume / pause / stop / steer */}
       <div style={{
         padding: '10px 12px',
         borderTop: '1px solid rgba(0,229,255,0.15)',
@@ -679,67 +683,53 @@ function AgentDetailPanel({
         flexDirection: 'column',
         gap: 8,
       }}>
-        {/* Live Instruction Input (only for running agents) */}
-        {isRunning && (
-          <div style={{ display: 'flex', gap: 6 }}>
-            <input
-              type="text"
-              value={instruction}
-              onChange={(e) => setInstruction(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && handleSendInstruction()}
-              placeholder="Send live instruction..."
-              style={{
-                flex: 1,
-                background: 'rgba(0,229,255,0.05)',
-                border: '1px solid rgba(0,229,255,0.25)',
-                borderRadius: 3,
-                padding: '6px 10px',
-                fontSize: 10,
-                color: 'var(--text-primary)',
-                fontFamily: 'inherit',
-              }}
-            />
-            <button
-              onClick={handleSendInstruction}
-              disabled={sending || !instruction.trim()}
-              style={{
-                background: 'rgba(0,229,255,0.15)',
-                border: '1px solid rgba(0,229,255,0.4)',
-                borderRadius: 3,
-                color: 'var(--accent-primary)',
-                fontSize: 8,
-                letterSpacing: '0.15em',
-                padding: '6px 12px',
-                cursor: sending || !instruction.trim() ? 'not-allowed' : 'pointer',
-                opacity: sending || !instruction.trim() ? 0.5 : 1,
-                fontFamily: 'inherit',
-              }}
-            >
-              SEND
-            </button>
+        {/* Steer: live for a running agent, queued for a stopped one */}
+        <div style={{ display: 'flex', gap: 6 }}>
+          <input
+            type="text"
+            value={instruction}
+            onChange={(e) => setInstruction(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && handleSendInstruction()}
+            placeholder={isRunning ? 'INTERJECT — NEXT ITERATION' : 'QUEUE INSTRUCTION FOR RESUME'}
+            style={{
+              flex: 1,
+              background: 'rgba(0,229,255,0.05)',
+              border: '1px solid rgba(0,229,255,0.25)',
+              borderRadius: 3,
+              padding: '6px 10px',
+              fontSize: 10,
+              color: 'var(--text-primary)',
+              fontFamily: 'inherit',
+              letterSpacing: '0.05em',
+            }}
+          />
+          <button
+            onClick={handleSendInstruction}
+            disabled={sending || !instruction.trim()}
+            style={{
+              background: 'rgba(0,229,255,0.15)',
+              border: '1px solid rgba(0,229,255,0.4)',
+              borderRadius: 3,
+              color: 'var(--accent-primary)',
+              fontSize: 8,
+              letterSpacing: '0.15em',
+              padding: '6px 12px',
+              cursor: sending || !instruction.trim() ? 'not-allowed' : 'pointer',
+              opacity: sending || !instruction.trim() ? 0.5 : 1,
+              fontFamily: 'inherit',
+            }}
+          >
+            SEND
+          </button>
+        </div>
+
+        {(agent.pendingInstructions?.length ?? 0) > 0 && (
+          <div style={{ fontSize: 8, letterSpacing: '0.12em', color: '#ff8c00' }}>
+            {agent.pendingInstructions!.length} INSTRUCTION{agent.pendingInstructions!.length > 1 ? 'S' : ''} QUEUED
           </div>
         )}
 
-        {/* Abort Button */}
-        {isRunning && (
-          <button
-            onClick={handleAbort}
-            style={{
-              background: 'rgba(255,59,59,0.1)',
-              border: '1px solid rgba(255,59,59,0.4)',
-              borderRadius: 3,
-              color: '#ff5577',
-              fontSize: 9,
-              letterSpacing: '0.15em',
-              padding: '8px 16px',
-              cursor: 'pointer',
-              fontFamily: 'inherit',
-              fontWeight: 600,
-            }}
-          >
-            ✕ ABORT AGENT
-          </button>
-        )}
+        <AgentControls agent={agent} />
 
         {/* Summary for completed agents */}
         {!isRunning && agent.summary && (
@@ -807,4 +797,118 @@ function LogLine({ text }: { text: string }) {
 
 function formatModelName(m: string): string {
   return formatModelLabel(m);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Per-agent live controls: RESUME / PAUSE / STOP (+ ABORT), status-driven.
+// Resume re-enters the same agent id with its prior transcript; pause and stop
+// are cooperative and take effect at the loop's next safe point.
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function agentAction(id: string, action: 'resume' | 'pause' | 'stop', body: Record<string, unknown> = {}) {
+  await authFetch(`${API}/api/agents/${id}/${action}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+}
+
+const RESUMABLE = ['failed', 'stopped', 'complete', 'paused'];
+
+function AgentControls({ agent, compact }: { agent: AgentRecord; compact?: boolean }) {
+  const [busy, setBusy] = useState<string | null>(null);
+  const running = agent.status === 'running' || agent.status === 'spawning';
+  const pending = agent.pendingControl ? String(agent.pendingControl) : null;
+
+  const run = async (action: 'resume' | 'pause' | 'stop', body?: Record<string, unknown>) => {
+    setBusy(action);
+    try { await agentAction(agent.id, action, body); } catch { /* ignore */ }
+    setBusy(null);
+  };
+
+  return (
+    <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+      {running ? (
+        <>
+          <CtlButton
+            label={pending === 'pause' ? 'PAUSING' : 'PAUSE'}
+            tone="amber"
+            disabled={!!pending || busy === 'pause'}
+            onClick={() => run('pause')}
+          />
+          <CtlButton
+            label={pending === 'stop' ? 'STOPPING' : 'STOP'}
+            tone="red"
+            disabled={!!pending || busy === 'stop'}
+            onClick={() => run('stop')}
+          />
+          {!compact && (
+            <CtlButton
+              label="ABORT"
+              tone="red"
+              disabled={false}
+              onClick={() => { void authFetch(`${API}/api/agents/${agent.id}`, { method: 'DELETE' }); }}
+            />
+          )}
+        </>
+      ) : (
+        RESUMABLE.includes(agent.status) && (
+          <CtlButton
+            label={busy === 'resume' ? 'RESUMING' : 'RESUME'}
+            tone="cyan"
+            disabled={busy === 'resume'}
+            onClick={() => run('resume', { note: 'resumed from the HUD by the operator' })}
+          />
+        )
+      )}
+    </div>
+  );
+}
+
+function CtlButton({
+  label, tone, disabled, onClick,
+}: {
+  label: string;
+  tone: 'cyan' | 'amber' | 'red';
+  disabled: boolean;
+  onClick: () => void;
+}) {
+  const colors = {
+    cyan: { fg: '#00e5ff', bg: 'rgba(0,229,255,0.1)', br: 'rgba(0,229,255,0.4)' },
+    amber: { fg: '#ff8c00', bg: 'rgba(255,140,0,0.08)', br: 'rgba(255,140,0,0.35)' },
+    red: { fg: '#ff5577', bg: 'rgba(255,59,59,0.08)', br: 'rgba(255,59,59,0.35)' },
+  }[tone];
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      style={{
+        background: colors.bg,
+        border: `1px solid ${colors.br}`,
+        borderRadius: 2,
+        color: colors.fg,
+        fontSize: 8,
+        letterSpacing: '0.2em',
+        padding: '4px 9px',
+        cursor: disabled ? 'not-allowed' : 'pointer',
+        opacity: disabled ? 0.45 : 1,
+        fontFamily: 'inherit',
+        fontWeight: 700,
+      }}
+    >
+      {label}
+    </button>
+  );
+}
+
+function statusAccent(status: string): string {
+  switch (status) {
+    case 'running':
+    case 'spawning': return '#ff8c00';
+    case 'complete': return '#00ff9d';
+    case 'failed': return '#ff3b3b';
+    case 'paused': return '#00e5ff';
+    case 'stopped': return '#8899aa';
+    default: return '#00e5ff';
+  }
 }

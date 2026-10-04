@@ -35,6 +35,7 @@ export function useJarvisTTS() {
   // Bookkeeping for play-order despite out-of-order synth.
   const queueRef = useRef<HTMLAudioElement[]>([]);
   const playingRef = useRef(false);
+  const currentAudioRef = useRef<HTMLAudioElement | null>(null);
   const nextSlotRef = useRef(0);
   const playSlotRef = useRef(0);
   const pendingRef = useRef<Map<number, HTMLAudioElement | null>>(new Map());
@@ -48,6 +49,8 @@ export function useJarvisTTS() {
 
   function cancelAll() {
     cancelGenRef.current++;
+    currentAudioRef.current?.pause();
+    currentAudioRef.current = null;
     queueRef.current.forEach((a) => { try { a.pause(); } catch {} });
     queueRef.current = [];
     pendingRef.current.clear();
@@ -66,9 +69,11 @@ export function useJarvisTTS() {
     const next = queueRef.current.shift();
     if (!next) return;
     playingRef.current = true;
-    next.play().catch(() => {});
-    next.onended = () => { playingRef.current = false; playNext(); };
-    next.onerror = () => { playingRef.current = false; playNext(); };
+    currentAudioRef.current = next;
+    const finish = () => { currentAudioRef.current = null; playingRef.current = false; playNext(); };
+    next.onended = finish;
+    next.onerror = finish;
+    next.play().catch(finish);
   }
 
   async function speakText(text: string, gen: number) {
@@ -83,9 +88,10 @@ export function useJarvisTTS() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text: cleaned, speed: ttsSpeed }),
       });
-      if (gen !== cancelGenRef.current || !res.ok) { advanceSlot(slot, null); return; }
+      if (gen !== cancelGenRef.current) return;
+      if (!res.ok) { advanceSlot(slot, null); return; }
       const blob = await res.blob();
-      if (gen !== cancelGenRef.current) { advanceSlot(slot, null); return; }
+      if (gen !== cancelGenRef.current) return;
       const url = URL.createObjectURL(blob);
       const audio = new Audio(url);
       audio.volume = 1.0;
@@ -95,7 +101,7 @@ export function useJarvisTTS() {
       attachTTSElement(audio);
       advanceSlot(slot, audio);
     } catch {
-      advanceSlot(slot, null);
+      if (gen === cancelGenRef.current) advanceSlot(slot, null);
     }
   }
 
@@ -178,7 +184,7 @@ export function useJarvisTTS() {
   // ── Final-message commit pass: flush any trailing fragment ───────────
   useEffect(() => {
     const last = messages[messages.length - 1];
-    if (!last || last.role !== 'assistant') return;
+    if (!last || last.role !== 'assistant' || !last.speakable) return;
     if (last.id === lastAssistantIdRef.current) return; // nothing new
     lastAssistantIdRef.current = last.id;
     if (!ttsEnabled) return;
@@ -191,6 +197,8 @@ export function useJarvisTTS() {
     }
     consumeFromBuffer(last.text, true);
   }, [messages, ttsEnabled, ttsSpeed]);
+
+  useEffect(() => () => cancelAll(), []);
 
   useEffect(() => {
     if (!ttsEnabled) cancelAll();

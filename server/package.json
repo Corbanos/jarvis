@@ -16,6 +16,7 @@
     "bambu-node": "^3.22.21",
     "better-sqlite3": "latest",
     "dotenv": "latest",
+    "fast-xml-parser": "^5.11.1",
     "fastify": "^5",
     "kokoro-js": "^1.2.1",
     "node-record-lpcm16": "^1.0.1",

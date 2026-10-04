@@ -17,6 +17,7 @@ import { WorldviewModule } from '@/components/Modules/WorldviewModule';
 import { ProjectsModule } from '@/components/Modules/ProjectsModule';
 import { LibraryModule } from '@/components/Modules/LibraryModule';
 import { AppRunnerModule } from '@/components/Modules/AppRunnerModule';
+import { BrowserModule } from '@/components/Modules/BrowserModule';
 import { useJarvisStore } from '@/lib/store';
 
 export { Dock } from './Dock';
@@ -38,7 +39,7 @@ const REGISTRY: Record<string, ModuleConfig> = {
   cad:             { title: 'CAD LIBRARY',         accent: '#00e5ff', Component: () => <CadLibrary /> },
   printer:         { title: 'BAMBU PRINTER',       accent: '#00e5ff', Component: ({ module }) => <PrinterModule module={module} /> },
   worldview:       { title: 'WORLDVIEW',           accent: '#00ff9d', Component: () => <WorldviewModule /> },
-  browser:         { title: 'BROWSER PREVIEW',     accent: '#00e5ff', Component: () => <BrowserPlaceholder /> },
+  browser:         { title: 'JARVIS BROWSER',      accent: '#00e5ff', Component: () => <BrowserModule /> },
   shell:           { title: 'SHELL',               accent: '#ff8c00', Component: () => <ShellModule /> },
   'cad-preview':   { title: 'CAD PREVIEW',         accent: '#00e5ff', Component: ({ module }) => <CadPreviewModule module={module} /> },
   weather:         { title: 'ATMOSPHERIC',         accent: '#00e5ff', Component: ({ module }) => <WeatherModule module={module} /> },
@@ -127,15 +128,3 @@ function PrinterModule({ module }: { module: import('@/lib/workspace').ModuleIns
   );
 }
 
-function BrowserPlaceholder() {
-  return (
-    <div style={{ padding: 20, textAlign: 'center', color: 'var(--text-dim)' }}>
-      <div style={{ fontSize: 32, color: 'var(--accent-primary)', opacity: 0.3, marginBottom: 8 }}>◌</div>
-      <div style={{ fontSize: 10, letterSpacing: '0.2em' }}>BROWSER MODULE</div>
-      <div style={{ fontSize: 9, marginTop: 6, opacity: 0.7, padding: '0 12px', lineHeight: 1.6 }}>
-        Jarvis controls its own Chromium window via Playwright. Ask him to browse a site —
-        the window opens on your desktop, separate from this HUD.
-      </div>
-    </div>
-  );
-}

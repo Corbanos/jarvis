@@ -1,8 +1,9 @@
+import { requestContext, validIdentity } from './core/request-context.js';
 import type { FastifyInstance } from 'fastify';
 import type { WebSocket } from '@fastify/websocket';
 import type { WSEvent } from './types/index.js';
 
-const clients = new Set<WebSocket>();
+
 
 export interface WSHub {
   broadcast(event: WSEvent): void;
@@ -10,10 +11,12 @@ export interface WSHub {
 }
 
 export async function registerWS(app: FastifyInstance): Promise<WSHub> {
+  const clients = new Map<WebSocket, string | undefined>();
   await app.register(import('@fastify/websocket'));
 
-  app.get('/ws', { websocket: true }, (socket) => {
-    clients.add(socket);
+  app.get('/ws', { websocket: true }, (socket, request) => {
+    const id = validIdentity((request.query as { clientId?: string }).clientId);
+    clients.set(socket, id);
     console.log(`[WS] Client connected. Total: ${clients.size}`);
 
     socket.send(JSON.stringify({
@@ -34,8 +37,13 @@ export async function registerWS(app: FastifyInstance): Promise<WSHub> {
 
   const hub: WSHub = {
     broadcast(event: WSEvent) {
-      const msg = JSON.stringify(event);
-      for (const client of clients) {
+      const ctx = requestContext.getStore();
+      const routed = ctx?.clientId ? { ...event, payload: { ...event.payload, clientId: ctx.clientId, requestId: ctx.requestId } } : event;
+      const msg = JSON.stringify(routed);
+      for (const [client, clientId] of clients) {
+        if (ctx?.clientId && clientId !== ctx.clientId) continue;
+        // Unattributed background messages must never masquerade as a chat turn.
+        if (!ctx?.clientId && ['thinking', 'message', 'dismiss', 'worldview'].includes(event.type)) continue;
         try {
           if (client.readyState === 1 /* OPEN */) {
             client.send(msg);

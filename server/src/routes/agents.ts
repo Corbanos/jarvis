@@ -3,6 +3,15 @@ import { getRouting, setRouting, usingOllama } from '../core/model-routing.js';
 import { CURATED_OPENAI_MODELS } from '../core/providers/openai.js';
 
 export async function agentRoutes(app: FastifyInstance) {
+  // The control endpoints (pause/stop) take no payload, but browsers and curl
+  // both like to send `Content-Type: application/json` with an empty body,
+  // which Fastify rejects by default. Scoped to this plugin only.
+  app.addContentTypeParser('application/json', { parseAs: 'string' }, (_req, body, done) => {
+    const raw = typeof body === 'string' ? body.trim() : '';
+    if (!raw) return done(null, {});
+    try { done(null, JSON.parse(raw)); } catch (err) { done(err as Error, undefined); }
+  });
+
   // List all agents (running + historical)
   app.get('/api/agents', async (_req, reply) => {
     return reply.send(app.agentPool.list());
@@ -63,6 +72,62 @@ export async function agentRoutes(app: FastifyInstance) {
       return reply.status(400).send({ error: 'Agent not running or not found' });
     }
     return reply.send({ success: true, instruction: body.instruction });
+  });
+
+  // ─────────────────────────────────────────────────────────────────────
+  // Live control: resume / steer / pause / stop
+  // Auth is the global onRequest hook in core/auth.ts, same as every other
+  // /api/agents route. Each returns the updated record; the pool broadcasts
+  // the agent_update / agent_instruction_queued events the HUD already reads.
+  // Ids may be abbreviated (case-insensitive prefix, e.g. "AECF653A").
+  // ─────────────────────────────────────────────────────────────────────
+
+  // Re-enter a failed/stopped/paused/completed agent's loop in place.
+  app.post('/api/agents/:id/resume', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const body = (request.body ?? {}) as { note?: string };
+    const res = app.agentPool.resume(id, body.note);
+    if (!res.ok) {
+      const code = res.error?.startsWith('no agent') ? 404 : 409;
+      return reply.status(code).send({ error: res.error, agent: res.agent });
+    }
+    return reply.send(res.agent);
+  });
+
+  // Inject an instruction into a running agent (or queue it for its resume).
+  app.post('/api/agents/:id/steer', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const body = (request.body ?? {}) as { message?: string; instruction?: string };
+    const message = body.message ?? body.instruction;
+    if (!message?.trim()) return reply.status(400).send({ error: 'message required' });
+    const res = app.agentPool.steer(id, message);
+    if (!res.ok) {
+      const code = res.error?.startsWith('no agent') ? 404 : 400;
+      return reply.status(code).send({ error: res.error });
+    }
+    return reply.send({ ...res.agent, delivery: res.delivery });
+  });
+
+  // Cooperative pause — takes effect at the next iteration boundary.
+  app.post('/api/agents/:id/pause', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const res = app.agentPool.pause(id);
+    if (!res.ok) {
+      const code = res.error?.startsWith('no agent') ? 404 : 409;
+      return reply.status(code).send({ error: res.error, agent: res.agent });
+    }
+    return reply.send(res.agent);
+  });
+
+  // Cooperative stop — same safe-point semantics, still resumable.
+  app.post('/api/agents/:id/stop', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const res = app.agentPool.stop(id);
+    if (!res.ok) {
+      const code = res.error?.startsWith('no agent') ? 404 : 409;
+      return reply.status(code).send({ error: res.error, agent: res.agent });
+    }
+    return reply.send(res.agent);
   });
 
   // Clear all historical agents

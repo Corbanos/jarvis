@@ -32,7 +32,8 @@ export function useChatHistory(sessionId = 'default') {
           text: m.content,
           timestamp: m.timestamp,
         }));
-        setMessages(restored);
+        // A slow history load must not overwrite a reply already streaming locally.
+        if (!useJarvisStore.getState().messages.length) setMessages(restored);
         console.log(`[History] Loaded ${restored.length} messages from session "${sessionId}"`);
       })
       .catch((e) => console.warn('[History] Load failed:', e));

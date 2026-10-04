@@ -8,17 +8,17 @@ export function setSpawnFn(fn: (goal: string, opts?: { projectId?: string; paren
 
 export const spawnAgentTool: ToolDefinition = {
   name: 'spawn_agent',
-  description: `Spawn a dedicated autonomous sub-agent that runs a TASK LOOP in the background until done. The agent has full tool access and IT KEEPS LOOPING (test → fix → test) until the goal is achieved or it explicitly fails.
+  description: `Spawn a dedicated autonomous sub-agent that runs a TASK LOOP in the background until done. NOTE: if the agent ALREADY EXISTS — it failed on a rate limit, needs a mid-flight instruction, or should be paused/stopped — use the 'agent_control' tool (resume | steer | pause | stop | status) instead of spawning a fresh one and retyping the context. The agent has full tool access and IT KEEPS LOOPING (test → fix → test) until the goal is achieved or it explicitly fails.
 
 CRITICAL — when to spawn (your default):
 - ANY bug investigation or fix. The operator says "X is broken" → spawn an agent and let it loop. Do NOT debug inline. Spawning is faster, doesn't burn your context, and the agent will iterate. You spent 3 minutes once doing this inline and never fixed it. Don't repeat that.
 - ANY code change (file edits, refactors, builds, tests, installs).
-- ANY multi-step research or shell work.
-- Anything beyond a one-tool-call answer.
+- Substantial research reports or shell/build work.
+- NOT news, headlines or other quick/current information, regardless of a short sequence of retrieval calls.
 
-Inline (no agent) is ONLY for:
+Inline (no agent) is REQUIRED for quick retrieval, including:
 - Conversation, opinions, jokes, status reports.
-- One-shot tool calls (one weather lookup, one file read, one nearby search).
+- News/current info, weather, nearby searches and brief lookups. Search → read → verify → summarise directly, even across multiple tool calls. Cite retrieved sources; do not fabricate current information.
 - Quick acknowledgements.
 
 The agent loops until completion — that's its job, not yours. After spawning, give the operator ONE short line ("On it, sir.") and stop. Do not narrate the agent's progress in your reply; the agent panel shows it live.

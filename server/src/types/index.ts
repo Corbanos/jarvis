@@ -10,6 +10,8 @@ export type WSEventType =
   | 'agent_complete'
   | 'agent_instruction'
   | 'agent_instruction_queued'
+  | 'agent_resume'
+  | 'agent_control'
   | 'model_changed'
   | 'jarvis_model_changed'
   | 'agents_history_cleared'
@@ -28,10 +30,15 @@ export interface WSEvent {
   timestamp: number;
 }
 
+export type AgentStatus = 'spawning' | 'running' | 'complete' | 'failed' | 'paused' | 'stopped';
+
+/** Cooperative control request, honoured between loop iterations. */
+export type AgentControl = 'pause' | 'stop';
+
 export interface AgentRecord {
   id: string;
   goal: string;
-  status: 'spawning' | 'running' | 'complete' | 'failed';
+  status: AgentStatus;
   startedAt: number;
   completedAt?: number;
   logs: string[];
@@ -41,6 +48,15 @@ export interface AgentRecord {
   parentAgentId?: string;   // For multi-agent / manager-worker setups
   role?: string;            // e.g. 'manager', 'worker', 'debug', 'builder'
   summary?: string;         // Short one-line summary saved on completion
+  iterations?: number;      // Cumulative loop iterations, survives resume
+  lastError?: string;       // Why the last run ended (provider 429, crash, ...)
+  resumeCount?: number;     // How many times this agent has been resumed
+  /** Queued operator interjections not yet handed to the model. */
+  pendingInstructions?: string[];
+  /** A pause/stop asked for but not yet reached (loop is mid-iteration). */
+  pendingControl?: AgentControl;
+  /** Log of tool invocations, kept for the resume transcript + HUD. */
+  toolCalls?: Array<{ tool: string; at: number; preview?: string }>;
 }
 
 export interface ToolDefinition {

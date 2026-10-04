@@ -49,15 +49,51 @@ db.exec(`
   );
 `);
 
-// Migrations — non-fatal if columns already exist.
-for (const stmt of [
-  `ALTER TABLE agents ADD COLUMN model TEXT`,
-  `ALTER TABLE agents ADD COLUMN project_id TEXT`,
-  `ALTER TABLE agents ADD COLUMN parent_agent_id TEXT`,
-  `ALTER TABLE agents ADD COLUMN role TEXT`,
-  `ALTER TABLE agents ADD COLUMN summary TEXT`,
-]) {
-  try { db.exec(stmt); } catch { /* column already exists */ }
+// Forward-only migrations. Every add is guarded by a PRAGMA table_info check
+// (and a try/catch belt) so re-running against an existing database is a
+// no-op — nothing is ever dropped or rewritten.
+function tableColumns(table: string): string[] {
+  const rows = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+  return rows.map((r) => r.name);
+}
+
+function addColumn(table: string, column: string, decl: string) {
+  if (tableColumns(table).includes(column)) return;
+  try { db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${decl}`); } catch { /* raced with another writer */ }
+}
+
+for (const [column, decl] of [
+  ['model', 'TEXT'],
+  ['project_id', 'TEXT'],
+  ['parent_agent_id', 'TEXT'],
+  ['role', 'TEXT'],
+  ['summary', 'TEXT'],
+  // Resume / steer support: everything needed to re-enter an agent's loop in
+  // place after a crash, a rate limit, or a cooperative pause.
+  ['messages', 'TEXT'],              // JSON transcript (compacted) of the task loop
+  ['tool_calls', 'TEXT'],            // JSON log of {tool, at, preview}
+  ['iterations', 'INTEGER'],         // cumulative loop iterations across runs
+  ['last_error', 'TEXT'],            // why it stopped last time (e.g. provider 429)
+  ['pending_instructions', 'TEXT'],  // JSON queue of undelivered interjections
+  ['resume_count', 'INTEGER'],       // how many times it has been resumed
+] as Array<[string, string]>) {
+  addColumn('agents', column, decl);
+}
+
+function parseJson<T>(raw: unknown, fallback: T): T {
+  if (typeof raw !== 'string' || !raw) return fallback;
+  try { return JSON.parse(raw) as T; } catch { return fallback; }
+}
+
+/** JSON columns come back as strings; decode them defensively. */
+function hydrateAgentRow(row: Record<string, unknown>): Record<string, unknown> {
+  return {
+    ...row,
+    logs: parseJson<string[]>(row['logs'], []),
+    messages: parseJson<unknown[]>(row['messages'], []),
+    tool_calls: parseJson<unknown[]>(row['tool_calls'], []),
+    pending_instructions: parseJson<string[]>(row['pending_instructions'], []),
+  };
 }
 
 export const memory = {
@@ -98,10 +134,18 @@ export const memory = {
     parentAgentId?: string;
     role?: string;
     summary?: string;
+    /** Compacted task-loop transcript so the agent can be resumed in place. */
+    messages?: unknown[];
+    toolCalls?: unknown[];
+    iterations?: number;
+    lastError?: string;
+    pendingInstructions?: string[];
+    resumeCount?: number;
   }) {
     db.prepare(
-      `INSERT OR REPLACE INTO agents (id, goal, status, started_at, completed_at, logs, pid, model, project_id, parent_agent_id, role, summary)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT OR REPLACE INTO agents (id, goal, status, started_at, completed_at, logs, pid, model, project_id, parent_agent_id, role, summary,
+                                     messages, tool_calls, iterations, last_error, pending_instructions, resume_count)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       agent.id,
       agent.goal,
@@ -114,21 +158,24 @@ export const memory = {
       agent.projectId ?? null,
       agent.parentAgentId ?? null,
       agent.role ?? null,
-      agent.summary ?? null
+      agent.summary ?? null,
+      agent.messages ? JSON.stringify(agent.messages) : null,
+      agent.toolCalls ? JSON.stringify(agent.toolCalls) : null,
+      agent.iterations ?? null,
+      agent.lastError ?? null,
+      agent.pendingInstructions ? JSON.stringify(agent.pendingInstructions) : null,
+      agent.resumeCount ?? null
     );
   },
 
   getAgents(): Array<Record<string, unknown>> {
     const rows = db.prepare('SELECT * FROM agents ORDER BY started_at DESC').all() as Array<Record<string, unknown>>;
-    return rows.map((r) => ({ ...r, logs: JSON.parse(r['logs'] as string) }));
+    return rows.map((r) => hydrateAgentRow(r));
   },
 
   getAgent(id: string): Record<string, unknown> | undefined {
     const row = db.prepare('SELECT * FROM agents WHERE id = ?').get(id) as Record<string, unknown> | undefined;
-    if (row) {
-      row['logs'] = JSON.parse(row['logs'] as string);
-    }
-    return row;
+    return row ? hydrateAgentRow(row) : undefined;
   },
 
   deleteAgent(id: string): boolean {

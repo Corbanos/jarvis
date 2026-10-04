@@ -1,3 +1,4 @@
+import { requestContext } from './request-context.js';
 import type { ToolDefinition } from '../types/index.js';
 
 const tools = new Map<string, ToolDefinition>();
@@ -22,6 +23,7 @@ export const toolRegistry = {
   },
 
   async dispatch(name: string, input: Record<string, unknown>): Promise<string> {
+    if (name === 'spawn_agent' && requestContext.getStore()?.inlineRetrieval) return 'Quick news/current information must be retrieved inline. Use news/browser/weather directly, including short multi-call verification; do not delegate.';
     const tool = tools.get(name);
     if (!tool) return `Error: Unknown tool "${name}"`;
     try {

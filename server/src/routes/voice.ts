@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { transcribeBase64, checkWhisperAvailable } from '../modules/voice-vtt.js';
-import { synthesizeToBuffer, getVoiceInfo, speak } from '../modules/voice-tts.js';
+import { synthesizeToBuffer, getVoiceInfo } from '../modules/voice-tts.js';
 import { log } from '../core/logger.js';
 
 export async function voiceRoutes(app: FastifyInstance) {
@@ -43,12 +43,9 @@ export async function voiceRoutes(app: FastifyInstance) {
     return reply.send(result.audioBuffer);
   });
 
-  // Server-side speak (legacy / scheduler use)
-  app.post('/api/voice/speak', async (request, reply) => {
-    const body = request.body as { text: string };
-    if (!body.text) return reply.status(400).send({ error: 'text required' });
-    await speak(body.text);
-    return reply.send({ ok: true });
+  // Never play on the host, even for legacy clients or synthesis failures.
+  app.post('/api/voice/speak', async (_request, reply) => {
+    return reply.status(410).send({ error: 'Host playback disabled. Use /api/voice/synthesize and play the response on the requesting device.' });
   });
 
   app.get('/api/voice/status', async (_req, reply) => {

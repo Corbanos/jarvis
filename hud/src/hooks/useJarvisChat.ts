@@ -2,6 +2,7 @@
 import { useState, useCallback, useRef } from 'react';
 import { useJarvisStore } from '@/lib/store';
 import { v4 as uuid } from 'uuid';
+import { readChatStream } from '@/lib/chat-stream';
 import { authFetch } from '@/lib/auth';
 
 const API = process.env['NEXT_PUBLIC_JARVIS_API'] ?? 'http://localhost:7777';
@@ -46,14 +47,12 @@ export function useJarvisChat() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ message: trimmed, sessionId }),
       });
-      if (!res.body) throw new Error('No response body');
-      const reader = res.body.getReader();
-      const dec = new TextDecoder();
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        void dec.decode(value); // tokens arrive via WebSocket
-      }
+      if (!res.ok || !res.body) throw new Error(`Chat request failed (${res.status})`);
+      await readChatStream(res.body, (event) => {
+        if (event.type === 'token') useJarvisStore.getState().addThinkingToken(event.token);
+        if (event.type === 'done') addMessage({ id: event.id ?? uuid(), role: 'assistant', text: event.text, timestamp: Date.now(), speakable: true });
+        if (event.type === 'error') throw new Error(event.message);
+      });
     } catch (err) {
       addMessage({ id: uuid(), role: 'assistant', text: `System error: ${err}`, timestamp: Date.now() });
     } finally {

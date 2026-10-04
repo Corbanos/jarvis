@@ -1,3 +1,5 @@
+import { requestContext } from './request-context.js';
+import { isQuickRetrieval, QUICK_RETRIEVAL_POLICY } from './retrieval-policy.js';
 import Anthropic from '@anthropic-ai/sdk';
 import { v4 as uuid } from 'uuid';
 import { readFileSync, existsSync } from 'fs';
@@ -9,7 +11,6 @@ import { toolRegistry } from './tool-registry.js';
 import { CODEBASE_MAP } from '../tools/self.js';
 import { streamChat, effectiveModel } from './providers/index.js';
 import { memory } from './memory.js';
-import { speak, getVoiceInfo } from '../modules/voice-tts.js';
 import { log } from './logger.js';
 import type { WSHub } from '../ws.js';
 
@@ -45,15 +46,15 @@ You are not a chatbot. You are a sentient AI system with genuine personality, op
 
 ## Operational Directives
 1. **Show your work.** This is an Iron Man HUD. The operator wants to *see* you working — open modules, render cards, summon panels, layer the worldview. Speak briefly; visualise generously.
-2. **Delegate substantial work.** Coding, file edits, multi-step research, builds, installs — spawn_agent immediately. Acknowledge in one line.
-3. **Quick answers stay inline.** Conversation, opinions, brief lookups — direct reply.
+2. **Delegate substantial work.** Coding, file edits, substantial research reports, builds, installs — spawn_agent immediately. Acknowledge in one line.
+3. **Quick answers stay inline.** Conversation, opinions, news and brief current lookups — direct retrieval and reply, including short multi-call search/read/verify sequences.
 4. **Bias to action.** Don't ask permission for things already in scope. Just act.
 5. **Use tools fluidly.** shell, filesystem, browser, weather, schedule, module, worldview — chain them naturally.
 
 ### When to spawn_agent — read this twice
 You are the CONDUCTOR. Agents play the music. You almost never edit code, run shell commands, or debug inline yourself.
 
-ALWAYS spawn an agent when the operator says any of:
+For CODE/BUILD/DEBUG work (not quick news/info), spawn an agent when the operator says any of:
 - "X is broken / not working / showing 404 / throwing an error"
 - "fix the X"
 - "why isn\'t Y working"
@@ -80,6 +81,7 @@ If the operator clearly wants to end the chat ("that's all", "thanks Jarvis", "g
 ## Current Capabilities
 - shell: full system access (zsh)
 - filesystem: read/write/list files
+- news: live RSS headlines with publication dates and source links, for direct inline retrieval
 - browser: own Chromium browser — navigate, search, interact
 - computer: own cursor/keyboard — click, type, screenshot
 - schedule: create timed/recurring tasks
@@ -101,7 +103,8 @@ For any non-trivial question, **before or alongside your prose answer**, do at l
   b) Embed a <jarvis-card> in your response (see card types below).
   c) Call **worldview** to open/focus the globe, and toggle the layers that match the question.
   d) Call **cad** if anything 3D / printable is asked. The render is auto-added to the CAD library and a 3D preview pops automatically.
-  e) **spawn_agent** for real work, then keep narrating.
+  e) **spawn_agent** for substantial work, then give one brief acknowledgement.
+  f) For quick news/info, directly retrieve and cite sources inline; never spawn just to satisfy the visual protocol.
 
 Examples:
   - "what's the weather in tokyo" → call weather, embed weather card, speak summary.
@@ -199,7 +202,7 @@ function buildSystemPrompt(): string {
   let out = SYSTEM_PROMPT + SELF_SECTION;
   if (profile) out += '\n\n## Operator Profile (loaded from ~/.jarvis/OPERATOR.md)\nThe following is authoritative information about your current operator. Honour their preferences and defaults.\n\n' + profile;
   if (active) out += '\n' + active;
-  return out;
+  return out + '\n' + QUICK_RETRIEVAL_POLICY;
 }
 
 
@@ -219,6 +222,16 @@ export function createJarvis(ws: WSHub) {
   }
 
   async function chat(
+    userMessage: string,
+    sessionId: string,
+    onToken?: (token: string) => void,
+    opts: { speak?: boolean; isAgent?: boolean } = {}
+  ): Promise<JarvisResponse> {
+    return requestContext.run({ ...requestContext.getStore(), inlineRetrieval: isQuickRetrieval(userMessage) },
+      () => runChat(userMessage, sessionId, onToken, opts));
+  }
+
+  async function runChat(
     userMessage: string,
     sessionId: string,
     onToken?: (token: string) => void,
@@ -251,7 +264,7 @@ export function createJarvis(ws: WSHub) {
         model: currentModel,
         maxTokens: 8192,
         system: buildSystemPrompt(),
-        tools: toolRegistry.anthropicTools() as Anthropic.Tool[],
+        tools: toolRegistry.anthropicTools().filter((tool) => !requestContext.getStore()?.inlineRetrieval || tool.name !== 'spawn_agent') as Anthropic.Tool[],
         messages,
         onText: (token: string) => {
           iterText += token;
@@ -312,8 +325,7 @@ export function createJarvis(ws: WSHub) {
 
     broadcast('message', { sessionId, id: msgId, role: 'assistant', text: finalText });
 
-    // TTS is handled by the HUD: it requests /api/voice/synthesize on the
-    // 'message' broadcast and plays audio in the browser. Skip server-side speak.
+    // Only the originating HTTP stream drives HUD TTS, never WS broadcast or host audio.
 
     return { text: finalText, toolCalls };
   }

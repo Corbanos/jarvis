@@ -1,3 +1,4 @@
+import { getClientId, getSessionId } from './client-identity';
 /**
  * Client-side auth — stores access token in localStorage,
  * adds it to fetch and WebSocket calls.
@@ -25,8 +26,11 @@ export const useAuth = create<AuthState>()(
 /** Wrap fetch to add the access token header. */
 export function authFetch(input: RequestInfo, init: RequestInit = {}): Promise<Response> {
   const token = useAuth.getState().token;
+  const headers = new Headers(init.headers);
+  headers.set('X-Jarvis-Client-Id', getClientId());
+  headers.set('X-Jarvis-Session-Id', getSessionId());
+  init = { ...init, headers };
   if (token) {
-    const headers = new Headers(init.headers);
     headers.set('X-Jarvis-Token', token);
     init.headers = headers;
   }

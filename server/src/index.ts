@@ -2,13 +2,16 @@ import 'dotenv/config';
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import { registerWS } from './ws.js';
+import { registerBrowserStream } from './modules/browser-stream.js';
 import { createJarvis } from './core/jarvis.js';
 import { createAgentPool } from './core/agent-pool.js';
 import { toolRegistry } from './core/tool-registry.js';
 import { shellTool } from './tools/shell.js';
 import { filesystemTool } from './tools/filesystem.js';
 import { spawnAgentTool, setSpawnFn } from './tools/spawn-agent.js';
+import { agentControlTool, setAgentControlHost } from './tools/agent-control.js';
 import { computerTool } from './tools/computer.js';
+import { newsTool } from './tools/news.js';
 import { browserTool } from './tools/browser.js';
 import { scheduleTool } from './tools/schedule.js';
 import { weatherTool, setWeatherBroadcast } from './tools/weather.js';
@@ -73,12 +76,16 @@ async function main() {
 
   const ws = await registerWS(app);
   app.decorate('ws', ws);
+  // Live view of Jarvis's own Chromium (CDP screencast) at /ws/browser.
+  await registerBrowserStream(app);
 
   toolRegistry.register(shellTool);
   toolRegistry.register(filesystemTool);
   toolRegistry.register(spawnAgentTool);
+  toolRegistry.register(agentControlTool);
   toolRegistry.register(computerTool);
   toolRegistry.register(browserTool);
+  toolRegistry.register(newsTool);
   toolRegistry.register(scheduleTool);
   toolRegistry.register(weatherTool);
   toolRegistry.register(cadTool);
@@ -119,6 +126,8 @@ async function main() {
   const agentPool = createAgentPool(ws);
   app.decorate('agentPool', agentPool);
   setSpawnFn((goal, opts) => agentPool.spawn(goal, opts));
+  // Lets the main model resume / steer / pause / stop agents conversationally.
+  setAgentControlHost(agentPool);
 
   const jarvis = createJarvis(ws);
   app.decorate('jarvis', jarvis);
@@ -202,6 +211,7 @@ async function main() {
   log.check('POST /api/chat', true, 'streaming SSE');
   log.check('POST /api/voice/transcribe', true, 'whisper');
   log.check('GET  /ws', true, 'WebSocket HUD');
+  log.check('GET  /ws/browser', true, 'live browser screencast');
 
   log.ready(PORT);
 

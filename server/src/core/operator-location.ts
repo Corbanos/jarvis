@@ -1,3 +1,4 @@
+import { requestContext } from './request-context.js';
 import { chmodSync, existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -124,24 +125,25 @@ export class OperatorLocationStore {
   }
 }
 
-const store = new OperatorLocationStore();
-
-export function setOperatorLocation(loc: LocationInput): void {
-  store.set(loc);
+// Browser fixes are ephemeral and keyed by requesting page/client. Never load the
+// legacy operator-location.json: it has no device attribution.
+const locations = new Map<string, OperatorLocation>();
+const MAX_AGE = 30 * 60_000;
+export function setOperatorLocation(loc: LocationInput, clientId = requestContext.getStore()?.clientId): void {
+  if (!clientId) return;
+  const now = Date.now();
+  for (const [id, fix] of locations) if (now - fix.updatedAt > MAX_AGE) locations.delete(id);
+  if (locations.size >= 1000) locations.delete(locations.keys().next().value!);
+  locations.set(clientId, { ...loc, updatedAt: now });
 }
-
-export function getOperatorLocation(): OperatorLocation | null {
-  return store.get();
+export function getOperatorLocation(clientId = requestContext.getStore()?.clientId): OperatorLocation | null {
+  const fix = clientId ? locations.get(clientId) : null;
+  return fix ? { ...fix } : null;
 }
-
-export function clearOperatorLocation(): void {
-  store.clear();
+export function clearOperatorLocation(clientId = requestContext.getStore()?.clientId): void {
+  if (clientId) locations.delete(clientId);
 }
-
-/**
- * Return precise browser fix if it's recent (default <30 min), else null.
- * Tools should fall back to ipLocate() / profile default if this returns null.
- */
-export function getFreshLocation(maxAgeMs: number = 30 * 60_000): OperatorLocation | null {
-  return store.getFresh(maxAgeMs);
+export function getFreshLocation(maxAgeMs = MAX_AGE): OperatorLocation | null {
+  const fix = getOperatorLocation();
+  return fix && Date.now() - fix.updatedAt <= maxAgeMs ? fix : null;
 }

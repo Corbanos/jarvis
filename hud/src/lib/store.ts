@@ -5,6 +5,8 @@ export interface ChatMessage {
   role: 'user' | 'assistant';
   text: string;
   timestamp: number;
+  /** Only a response received on this page's own chat HTTP request may speak. */
+  speakable?: boolean;
 }
 
 export interface ToolCallRecord {
@@ -28,6 +30,14 @@ export interface AgentRecord {
   projectId?: string;
   parentAgentId?: string;
   role?: string;
+  // Resume / steer state, kept live from the agent_update WS feed.
+  iterations?: number;
+  resumeCount?: number;
+  lastError?: string;
+  /** 'pause' | 'stop' asked for but not yet reached (loop is mid-iteration). */
+  pendingControl?: string | null;
+  /** Interjections queued but not yet handed to the model. */
+  pendingInstructions?: string[];
 }
 
 export interface TelemetryRecord {
@@ -121,7 +131,7 @@ export const useJarvisStore = create<JarvisState>((set) => ({
   addMessage: (m) =>
     set((s) => ({
       messages: [...s.messages.slice(-100), m],
-      thinkingTokens: '',
+      thinkingTokens: m.role === 'user' || m.speakable ? '' : s.thinkingTokens,
     })),
 
   addThinkingToken: (t) => set((s) => ({ thinkingTokens: s.thinkingTokens + t })),
@@ -190,12 +200,17 @@ export const useJarvisStore = create<JarvisState>((set) => ({
   setAgents: (agents) => set({ agents }),
 
   clearAgentHistory: () =>
-    set((s) => ({
-      agents: s.agents.filter((a) => a.status === 'running'),
-      focusedAgentId: s.agents.find(a => a.id === s.focusedAgentId)?.status === 'running' 
-        ? s.focusedAgentId 
-        : null
-    })),
+    set((s) => {
+      // Mirrors the server: running and paused agents are kept, since a paused
+      // agent is unfinished work that can still be resumed.
+      const keep = (status: string) => status === 'running' || status === 'spawning' || status === 'paused';
+      return {
+        agents: s.agents.filter((a) => keep(a.status)),
+        focusedAgentId: keep(s.agents.find((a) => a.id === s.focusedAgentId)?.status ?? '')
+          ? s.focusedAgentId
+          : null,
+      };
+    }),
 
   addTelemetry: (t) =>
     set((s) => ({ telemetry: [...s.telemetry.slice(-200), t] })),

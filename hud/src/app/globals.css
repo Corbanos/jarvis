@@ -122,3 +122,9 @@ html, body {
 ::-webkit-scrollbar-thumb:hover { background: var(--accent-primary); }
 
 ::selection { background: rgba(0, 229, 255, 0.15); color: var(--accent-bright); }
+
+/* Live browser view — click pulse on the cursor reticle */
+@keyframes jarvis-browser-ping {
+  0%   { transform: scale(0.6); opacity: 0.95; }
+  100% { transform: scale(3.6); opacity: 0; }
+}

@@ -5,8 +5,9 @@
  * Voices: af_heart (warm female), bm_george (British male — closest to Jarvis),
  *         bm_lewis (British male, deeper), am_adam (american male)
  */
-import { exec } from 'child_process';
-import { writeFileSync, readFileSync, existsSync, unlinkSync } from 'fs';
+import { execFile } from 'child_process';
+import { randomUUID } from 'node:crypto';
+import { readFileSync, existsSync, unlinkSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { log } from '../core/logger.js';
@@ -82,10 +83,9 @@ export async function synthesizeToBuffer(text: string, opts: { speed?: number } 
 }
 
 async function synthesizeMacOS(text: string, start: number): Promise<TTSResult | null> {
-  const out = join(tmpdir(), `jarvis-tts-${Date.now()}.aiff`);
+  const out = join(tmpdir(), `jarvis-tts-${randomUUID()}.aiff`);
   return new Promise((resolve) => {
-    exec(
-      `say -v "Daniel" -r 175 -o "${out}" "${text.replace(/"/g, '\\"').slice(0, 2000)}"`,
+    execFile('say', ['-v', 'Daniel', '-r', '175', '-o', out, '--', text.slice(0, 2000)],
       (err) => {
         try {
           if (err || !existsSync(out)) return resolve(null);
@@ -96,30 +96,6 @@ async function synthesizeMacOS(text: string, start: number): Promise<TTSResult |
       }
     );
   });
-}
-
-/**
- * Speak text out loud on the SERVER (used for scheduled tasks etc.)
- * Browser TTS (preferred) is handled by the /api/voice/speak endpoint
- * which streams the buffer back to the browser.
- */
-export async function speak(text: string): Promise<void> {
-  // For server-side speaking, use macOS say (non-blocking)
-  const clean = sanitize(text);
-  if (!clean) return;
-  if (_kokoro) {
-    // Kokoro can't directly play audio on server; just synth and play via afplay
-    try {
-      const result = await synthesizeToBuffer(clean);
-      if (result?.audioBuffer && result.method === 'kokoro') {
-        const tmp = join(tmpdir(), `jarvis-play-${Date.now()}.wav`);
-        writeFileSync(tmp, result.audioBuffer);
-        exec(`afplay "${tmp}" && rm "${tmp}"`);
-        return;
-      }
-    } catch { /* fall through */ }
-  }
-  exec(`say -v "Daniel" -r 175 "${clean.replace(/"/g, '\\"').slice(0, 2000)}"`);
 }
 
 export async function getVoiceInfo() {

@@ -1,3 +1,4 @@
+import { contextFromRequest, requestContext } from '../core/request-context.js';
 import type { FastifyInstance } from 'fastify';
 import {
   clearOperatorLocation,
@@ -8,7 +9,12 @@ import {
 } from '../core/operator-location.js';
 
 export async function locationRoutes(app: FastifyInstance) {
-  // HUD pushes precise browser geolocation here.
+  // Enforce attribution on every location route, including GET and DELETE.
+  app.addHook('onRequest', (request, reply, done) => {
+    const context = contextFromRequest(request);
+    if (!context.clientId) { void reply.status(400).send({ error: 'X-Jarvis-Client-Id required' }); return; }
+    requestContext.run(context, done);
+  });
   app.post('/api/location', async (request, reply) => {
     const location = parseBrowserLocation(request.body);
     if (!location) {

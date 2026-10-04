@@ -47,23 +47,6 @@ async function geocode(query: string): Promise<{ lat: number; lon: number; name:
   return null;
 }
 
-async function ipLocate(): Promise<{ lat: number; lon: number; name: string }> {
-  const tries = [
-    { url: 'https://ipwho.is/', pick: (j: any) => (j && j.success !== false && typeof j.latitude === 'number') ? { lat: j.latitude, lon: j.longitude, name: [j.city, j.region].filter(Boolean).join(', ') } : null },
-    { url: 'https://ipapi.co/json/', pick: (j: any) => (j && typeof j.latitude === 'number') ? { lat: j.latitude, lon: j.longitude, name: [j.city, j.region].filter(Boolean).join(', ') } : null },
-  ];
-  for (const t of tries) {
-    try {
-      const r = await fetch(t.url, { signal: AbortSignal.timeout(3500) });
-      if (!r.ok) continue;
-      const got = t.pick(await r.json());
-      if (got) return got;
-    } catch { /* next */ }
-  }
-  // Final fallback: Toronto (operator's home).
-  return { lat: 43.6532, lon: -79.3832, name: 'Toronto, ON' };
-}
-
 // Run one Overpass query, parse, return ranked pins. Each query targets
 // exactly ONE tag — keeps Overpass under its query budget.
 const OVERPASS_ENDPOINTS = [
@@ -265,7 +248,7 @@ Actions:
   - { action: "nearby", query: "<thing>", origin?: "address|lat,lon", radiusKm?, limit? }
         — POI search via Overpass/OSM. Drops pins on the globe and zooms
           to fit. If origin omitted, uses the operator's precise browser
-          location when fresh, then IP only as a labelled fallback.
+          location when fresh. If missing, request an explicit origin; never use the server's IP.
           Returns a numbered list with distances.
   - { action: "pins", pins: [{ lat, lon, label, sub?, tag? }], clear?, fit? }
         — drop arbitrary pins. tag: 'cyan' (default) | 'amber' | 'green' | 'red'.
@@ -326,7 +309,7 @@ available, sir."`,
       layers: { type: 'object', description: 'Map of { layerName: boolean } (layers action)' },
       mode: { type: 'string', enum: [...KNOWN_MODES] },
       query: { type: 'string', description: 'POI search term (nearby action) OR flight callsign/registration/icao24 hex (flight action), e.g. "AC1049", "C-FGKN", "ABC123"' },
-      origin: { type: 'string', description: 'Search origin: address or lat,lon. Omit to use the operator precise browser location, with IP as fallback.' },
+      origin: { type: 'string', description: 'Search origin: address or lat,lon. Omit to use the operator precise browser location, only; if unavailable, supply an explicit origin.' },
       radiusKm: { type: 'number', description: 'Search radius in km (default 5, max 25)' },
       limit: { type: 'number', description: 'Max results (default 8, max 25)' },
       destination: { type: 'string', description: '(flights-to) Place name or "lat,lon" — flights heading toward this point.' },
@@ -420,7 +403,7 @@ available, sir."`,
         const query = input['query'] as string | undefined;
         if (!query) return 'Error: query required.';
         let origin: { lat: number; lon: number; name: string };
-        let originSource: 'browser' | 'ip' | 'profile' | 'explicit' = 'profile';
+        let originSource: 'browser' | 'explicit';
         let originAccuracyM: number | undefined;
         const originStr = input['origin'] as string | undefined;
         if (originStr) {
@@ -440,8 +423,7 @@ available, sir."`,
             originSource = 'browser';
             originAccuracyM = fresh.accuracyM;
           } else {
-            origin = await ipLocate();
-            originSource = 'ip';
+            return 'Requesting device GPS is unavailable or stale. Enable LOCATION on this device or supply an explicit search origin. No host-IP or profile fallback was used.';
           }
         }
         const radiusKm = Math.min(25, Math.max(0.5, (input['radiusKm'] as number | undefined) ?? 5));
@@ -453,14 +435,10 @@ available, sir."`,
         // operator can immediately see how trustworthy the centre is.
         const meSub = originSource === 'browser'
           ? `${origin.name} · GPS ±${originAccuracyM ?? '?'} m`
-          : originSource === 'ip'
-            ? `${origin.name} · IP estimate (±5–25 km)`
-            : originSource === 'explicit'
-              ? `${origin.name} · explicit origin`
-              : origin.name;
+          : `${origin.name} · explicit origin`;
 
         const allPins: Pin[] = [
-          { lat: origin.lat, lon: origin.lon, label: 'You are here', sub: meSub, tag: 'green' },
+          { lat: origin.lat, lon: origin.lon, label: originSource === 'browser' ? 'You are here' : 'Search origin', sub: meSub, tag: 'green' },
           ...pois.map((p) => ({ lat: p.lat, lon: p.lon, label: p.label, sub: p.sub, tag: p.tag })),
         ];
         _broadcast('worldview', { action: 'open' });
@@ -473,9 +451,7 @@ available, sir."`,
 
         // Prepend a precision warning if origin came from IP — gives the
         // model a clear hint that distances may be off and to mention so.
-        const precisionNote = originSource === 'ip'
-          ? `WARNING: origin is an IP-geolocate centroid (city-level accuracy, can be 5–25 km off the operator's real position). Distances below are from that centroid, NOT the operator.\n\n`
-          : originSource === 'browser' && (originAccuracyM ?? 9999) > 200
+        const precisionNote = originSource === 'browser' && (originAccuracyM ?? 9999) > 200
             ? `Note: GPS fix has ±${originAccuracyM} m accuracy.\n\n`
             : '';
 
@@ -504,7 +480,7 @@ available, sir."`,
         } else {
           const fresh = getFreshLocation();
           if (fresh) { lat = fresh.lat; lon = fresh.lon; name = [fresh.city, fresh.region].filter(Boolean).join(', '); }
-          else { const ip = await ipLocate(); lat = ip.lat; lon = ip.lon; name = ip.name; }
+          else return 'Requesting device GPS is unavailable or stale. Enable LOCATION on this device or specify an origin; no host-IP fallback was used.';
         }
         const radiusKm = Math.min(2000, Math.max(20, (input['radiusKm'] as number | undefined) ?? 200));
         const limit = Math.min(50, Math.max(1, (input['limit'] as number | undefined) ?? 20));
@@ -514,7 +490,7 @@ available, sir."`,
         _broadcast('worldview', {
           action: 'pins', clear: true, fit: true,
           pins: [
-            { lat, lon, label: 'You are here', sub: name, tag: 'green' },
+            { lat, lon, label: originStr ? 'Search origin' : 'You are here', sub: name, tag: 'green' },
             ...flights.map((f) => ({ lat: f.lat, lon: f.lon, label: f.callsign, sub: `${f.aircraftType || '?'} · ${Math.round(f.altitudeM).toLocaleString()} m · ${Math.round(f.groundSpeedKmh)} km/h`, tag: 'amber' as const })),
           ],
         });

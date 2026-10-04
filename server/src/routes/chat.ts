@@ -1,8 +1,10 @@
+import { contextFromRequest, conversationSession, requestContext } from '../core/request-context.js';
 import type { FastifyInstance } from 'fastify';
 import { v4 as uuid } from 'uuid';
 import { memory } from '../core/memory.js';
 
 export async function chatRoutes(app: FastifyInstance) {
+  app.addHook('onRequest', (request, _reply, done) => requestContext.run(contextFromRequest(request), done));
   // Streaming chat endpoint
   app.post('/api/chat', async (request, reply) => {
     const body = request.body as {
@@ -16,7 +18,7 @@ export async function chatRoutes(app: FastifyInstance) {
       return reply.status(400).send({ error: 'message required' });
     }
 
-    const sessionId = body.sessionId ?? 'default';
+    const sessionId = conversationSession(request, body.sessionId);
     const jarvis = app.jarvis;
 
     // Stream response
@@ -33,7 +35,7 @@ export async function chatRoutes(app: FastifyInstance) {
         reply.raw.write(`data: ${JSON.stringify({ type: 'token', token })}\n\n`);
       });
 
-      reply.raw.write(`data: ${JSON.stringify({ type: 'done', text: result.text, toolCalls: result.toolCalls })}\n\n`);
+      reply.raw.write(`data: ${JSON.stringify({ type: 'done', id: requestContext.getStore()?.requestId, text: result.text, toolCalls: result.toolCalls })}\n\n`);
     } catch (err) {
       reply.raw.write(`data: ${JSON.stringify({ type: 'error', message: String(err) })}\n\n`);
     }
@@ -44,7 +46,7 @@ export async function chatRoutes(app: FastifyInstance) {
   // Non-streaming for agents
   app.post('/api/chat/sync', async (request, reply) => {
     const body = request.body as { message: string; sessionId?: string };
-    const sessionId = body.sessionId ?? uuid();
+    const sessionId = conversationSession(request, body.sessionId ?? uuid());
     const result = await app.jarvis.chat(body.message, sessionId);
     return reply.send(result);
   });
@@ -52,7 +54,7 @@ export async function chatRoutes(app: FastifyInstance) {
   // Load message history for a session
   app.get('/api/chat/history', async (request, reply) => {
     const query = request.query as { sessionId?: string; limit?: string };
-    const sessionId = query.sessionId ?? 'default';
+    const sessionId = conversationSession(request, query.sessionId);
     const limit = query.limit ? Math.min(500, parseInt(query.limit, 10)) : 100;
     const messages = memory.getFullMessages(sessionId, limit);
     return reply.send({ sessionId, messages });
@@ -61,7 +63,7 @@ export async function chatRoutes(app: FastifyInstance) {
   // Clear a session's history
   app.delete('/api/chat/history', async (request, reply) => {
     const query = request.query as { sessionId?: string };
-    const sessionId = query.sessionId ?? 'default';
+    const sessionId = conversationSession(request, query.sessionId);
     memory.clearSession(sessionId);
     return reply.send({ ok: true, sessionId });
   });

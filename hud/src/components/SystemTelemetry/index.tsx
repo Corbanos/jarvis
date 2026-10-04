@@ -81,11 +81,12 @@ export function SystemTelemetry() {
 
   return (
     <div style={{ padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 6 }}>
-      <Stat label="API LATENCY" value={`${latency}`} unit="ms" color={latency < 50 ? 'var(--accent-green)' : latency < 200 ? 'var(--accent-amber)' : 'var(--accent-red)'} />
-      <Stat label="UPTIME" value={uptimeStr} />
-      <Stat label="ACTIVE AGENTS" value={String(health.agents ?? 0)} color={(health.agents ?? 0) > 0 ? 'var(--accent-amber)' : undefined} />
-      <Stat label="WS CLIENTS" value={String(health.wsClients ?? 0)} />
+      <Stat label="DEVICE → SERVER RTT" value={`${latency}`} unit="ms" color={latency < 50 ? 'var(--accent-green)' : latency < 200 ? 'var(--accent-amber)' : 'var(--accent-red)'} />
+      <Stat label="SERVER UPTIME" value={uptimeStr} />
+      <Stat label="SERVER AGENTS" value={String(health.agents ?? 0)} color={(health.agents ?? 0) > 0 ? 'var(--accent-amber)' : undefined} />
+      <Stat label="SERVER CONNECTIONS" value={String(health.wsClients ?? 0)} />
 
+      <div style={{ fontSize: 9, color: 'var(--text-dim)' }}>GPS, clock and tab uptime describe this device. CPU/RAM and battery usage are not exposed by this browser. Voice audio plays here only for requests sent here.</div>
       <Divider />
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
@@ -119,8 +120,8 @@ export function SystemTelemetry() {
 
       <Divider />
 
-      <Stat label="VTT (whisper)" value={voice.whisperAvailable ? 'READY' : 'OFFLINE'} color={voice.whisperAvailable ? 'var(--accent-green)' : 'var(--accent-red)'} />
-      <Stat label="TTS engine" value={voice.method ?? '—'} color={voice.kokoroAvailable ? 'var(--accent-green)' : 'var(--accent-amber)'} />
+      <Stat label="SERVER VTT" value={voice.whisperAvailable ? 'READY' : 'OFFLINE'} color={voice.whisperAvailable ? 'var(--accent-green)' : 'var(--accent-red)'} />
+      <Stat label="SERVER TTS ENGINE" value={voice.method ?? '—'} color={voice.kokoroAvailable ? 'var(--accent-green)' : 'var(--accent-amber)'} />
       <Stat label="VOICE" value={voice.voice ?? '—'} />
     </div>
   );

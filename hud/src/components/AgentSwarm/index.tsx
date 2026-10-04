@@ -162,30 +162,97 @@ function AgentCard({ agent }: { agent: AgentRecord }) {
             </div>
           )}
 
-          {/* Kill button for running agents */}
-          {isRunning && (
-            <button
-              onClick={() => authFetch(`${API}/api/agents/${agent.id}`, { method: 'DELETE' })}
-              style={{
-                background: 'rgba(255,59,59,0.08)',
-                border: '1px solid rgba(255,59,59,0.3)',
-                color: '#ff5577',
-                fontSize: 8,
-                letterSpacing: '0.2em',
-                padding: '4px 8px',
-                borderRadius: 2,
-                cursor: 'pointer',
-                fontFamily: 'inherit',
-                fontWeight: 700,
-                alignSelf: 'flex-start',
-              }}
-            >
-              ✕ ABORT
-            </button>
-          )}
+          {/* Steer + lifecycle controls */}
+          <SwarmControls agent={agent} isRunning={isRunning} />
         </div>
       )}
     </div>
+  );
+}
+
+// ─── Per-agent controls: steer a running agent, resume a dead one ───────────
+
+function SwarmControls({ agent, isRunning }: { agent: AgentRecord; isRunning: boolean }) {
+  const [text, setText] = useState('');
+  const pending = agent.pendingControl ? String(agent.pendingControl).toUpperCase() : null;
+
+  const post = (path: string, body: Record<string, unknown> = {}) =>
+    authFetch(`${API}/api/agents/${agent.id}/${path}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }).catch(() => undefined);
+
+  const send = () => {
+    const message = text.trim();
+    if (!message) return;
+    setText('');
+    void post('steer', { message });
+  };
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+      <div style={{ display: 'flex', gap: 4 }}>
+        <input
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') send(); }}
+          placeholder={isRunning ? 'INTERJECT' : 'QUEUE FOR RESUME'}
+          style={{
+            flex: 1,
+            background: 'rgba(0,229,255,0.05)',
+            border: '1px solid rgba(0,229,255,0.2)',
+            borderRadius: 2,
+            padding: '3px 6px',
+            fontSize: 9,
+            color: 'var(--text-primary)',
+            fontFamily: 'inherit',
+            letterSpacing: '0.05em',
+          }}
+        />
+        <SwarmButton label="SEND" color="#00e5ff" onClick={send} disabled={!text.trim()} />
+      </div>
+      <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+        {isRunning ? (
+          <>
+            <SwarmButton label={pending === 'PAUSE' ? 'PAUSING' : 'PAUSE'} color="#ff8c00" onClick={() => void post('pause')} disabled={!!pending} />
+            <SwarmButton label={pending === 'STOP' ? 'STOPPING' : 'STOP'} color="#ff5577" onClick={() => void post('stop')} disabled={!!pending} />
+            <SwarmButton label="ABORT" color="#ff5577" onClick={() => { void authFetch(`${API}/api/agents/${agent.id}`, { method: 'DELETE' }); }} disabled={false} />
+          </>
+        ) : (
+          <SwarmButton label="RESUME" color="#00e5ff" onClick={() => void post('resume', { note: 'resumed from the HUD by the operator' })} disabled={false} />
+        )}
+        {(agent.pendingInstructions?.length ?? 0) > 0 && (
+          <span style={{ fontSize: 8, color: '#ff8c00', letterSpacing: '0.15em', alignSelf: 'center' }}>
+            {agent.pendingInstructions!.length} QUEUED
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function SwarmButton({ label, color, onClick, disabled }: { label: string; color: string; onClick: () => void; disabled: boolean }) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      style={{
+        background: `${color}14`,
+        border: `1px solid ${color}55`,
+        color,
+        fontSize: 8,
+        letterSpacing: '0.2em',
+        padding: '3px 8px',
+        borderRadius: 2,
+        cursor: disabled ? 'not-allowed' : 'pointer',
+        opacity: disabled ? 0.45 : 1,
+        fontFamily: 'inherit',
+        fontWeight: 700,
+      }}
+    >
+      {label}
+    </button>
   );
 }
 

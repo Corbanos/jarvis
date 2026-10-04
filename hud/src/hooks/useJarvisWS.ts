@@ -4,9 +4,10 @@ import { useJarvisStore } from '@/lib/store';
 import { emitWorldviewEvent } from '@/components/Worldview';
 
 import { useWorkspace, summon, type ModuleType } from '@/lib/workspace';
+import { acceptWSEvent } from '@/lib/client-identity';
 import { computeWsUrl } from '@/lib/ws-url';
 
-const WS_URL = computeWsUrl();
+
 const MAX_RECONNECT_DELAY = 16000;
 
 export function useJarvisWS() {
@@ -35,7 +36,7 @@ export function useJarvisWS() {
 
     function connect() {
       if (cancelled) return;
-      const socket = new WebSocket(WS_URL);
+      const socket = new WebSocket(computeWsUrl());
       ws.current = socket;
 
       socket.onopen = () => {
@@ -50,18 +51,13 @@ export function useJarvisWS() {
       socket.onmessage = (e) => {
         try {
           const event = JSON.parse(e.data);
+          if (!acceptWSEvent(event)) return;
           switch (event.type) {
-            case 'thinking':
-              if (event.payload.token) addThinkingToken(event.payload.token as string);
-              break;
             case 'tool_call':
               addToolCall({ name: event.payload.name as string, status: event.payload.status as string, input: event.payload.input as Record<string, unknown>, timestamp: event.timestamp });
               break;
             case 'tool_result':
               markToolDone(event.payload.name as string);
-              break;
-            case 'message':
-              addMessage({ id: event.payload.id as string, role: 'assistant', text: event.payload.text as string, timestamp: event.timestamp });
               break;
             case 'agent_spawn':
               addAgent({
@@ -74,12 +70,29 @@ export function useJarvisWS() {
                 model: event.payload.model as string | undefined,
               });
               break;
-            case 'agent_update':
-              updateAgent(event.payload.id as string, {
-                status: event.payload.status as string,
-                logs: event.payload.log ? [event.payload.log as string] : [],
-                model: event.payload.model as string | undefined,
-              });
+            case 'agent_update': {
+              // Resume / pause / stop all report through here, so the patch is
+              // built field-by-field: an absent key must not blank the record.
+              const p = event.payload as Record<string, unknown>;
+              const patch: Record<string, unknown> = {
+                status: p['status'] as string,
+                logs: p['log'] ? [p['log'] as string] : [],
+              };
+              if (p['model'] !== undefined) patch['model'] = p['model'];
+              if (p['iterations'] !== undefined) patch['iterations'] = p['iterations'];
+              if (p['resumeCount'] !== undefined) patch['resumeCount'] = p['resumeCount'];
+              if ('pendingControl' in p) patch['pendingControl'] = p['pendingControl'] ?? null;
+              if ('pendingInstructions' in p) patch['pendingInstructions'] = p['pendingInstructions'];
+              if ('lastError' in p) patch['lastError'] = p['lastError'] ?? undefined;
+              if ('completedAt' in p) patch['completedAt'] = p['completedAt'] ?? undefined;
+              // A resumed agent is live again: drop the finished-run summary.
+              if (p['status'] === 'running') patch['summary'] = undefined;
+              updateAgent(p['id'] as string, patch);
+              break;
+            }
+            case 'agent_resume':
+              updateAgent(event.payload.id as string, { status: 'running', liveText: '', summary: undefined, completedAt: undefined });
+              agentLog(event.payload.id as string, `>> RESUMED: ${event.payload.reason as string}`);
               break;
             case 'agent_token':
               appendAgentToken(event.payload.id as string, event.payload.token as string);
@@ -93,11 +106,17 @@ export function useJarvisWS() {
               agentLog(event.payload.id as string, `  ← ${truncate(event.payload.result as string ?? '', 120)}`);
               break;
             case 'agent_instruction':
-              agentLog(event.payload.id as string, `📨 INSTRUCTION: ${event.payload.instruction as string}`);
+              agentLog(event.payload.id as string, `>> INTERJECTION: ${event.payload.instruction as string}`);
               break;
             case 'agent_instruction_queued':
-              // Visual feedback that instruction was queued
-              agentLog(event.payload.id as string, `📬 Instruction queued: ${truncate(event.payload.instruction as string, 60)}`);
+              // Visual feedback that the interjection landed. 'queued' delivery
+              // means the agent is not running and gets it on resume.
+              agentLog(
+                event.payload.id as string,
+                event.payload.delivery === 'queued'
+                  ? `>> QUEUED FOR RESUME: ${truncate(event.payload.instruction as string, 60)}`
+                  : `>> INTERJECTION SENT: ${truncate(event.payload.instruction as string, 60)}`
+              );
               break;
             case 'agent_complete':
               completeAgent(
