@@ -27,6 +27,7 @@ export function useJarvisWS() {
   const triggerDismiss = useJarvisStore((s) => s.triggerDismiss);
   const addTelemetry = useJarvisStore((s) => s.addTelemetry);
   const setCurrentModel = useJarvisStore((s) => s.setCurrentModel);
+  const setAIProvider = useJarvisStore((s) => s.setAIProvider);
   const clearAgentHistory = useJarvisStore((s) => s.clearAgentHistory);
 
   useEffect(() => {
@@ -111,6 +112,17 @@ export function useJarvisWS() {
             case 'model_changed':
             case 'jarvis_model_changed':
               setCurrentModel(event.payload.model as string);
+              if (event.payload.provider === 'anthropic' || event.payload.provider === 'gemini') {
+                setAIProvider(event.payload.provider);
+              }
+              break;
+            case 'provider_changed':
+              if (event.payload.provider === 'anthropic' || event.payload.provider === 'gemini') {
+                setAIProvider(event.payload.provider);
+              }
+              if (event.payload.model && typeof event.payload.model === 'string') {
+                setCurrentModel(event.payload.model);
+              }
               break;
             case 'agents_history_cleared':
               clearAgentHistory();
@@ -205,7 +217,7 @@ export function useJarvisWS() {
       cancelled = true;
       ws.current?.close();
     };
-  }, [addThinkingToken, addToolCall, markToolDone, addMessage, setConnected, addAgent, updateAgent, appendAgentToken, setAgentTool, agentLog, completeAgent, triggerDismiss, addTelemetry, setCurrentModel, clearAgentHistory]);
+  }, [addThinkingToken, addToolCall, markToolDone, addMessage, setConnected, addAgent, updateAgent, appendAgentToken, setAgentTool, agentLog, completeAgent, triggerDismiss, addTelemetry, setCurrentModel, setAIProvider, clearAgentHistory]);
 }
 
 function truncate(s: string, n: number): string {

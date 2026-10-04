@@ -47,6 +47,7 @@ interface JarvisState {
   dismissNonce: number;
   
   // Model state
+  aiProvider: 'anthropic' | 'gemini';
   currentModel: string;
   availableModels: string[];
   
@@ -78,6 +79,7 @@ interface JarvisState {
   addTelemetry: (t: TelemetryRecord) => void;
   
   // Model management
+  setAIProvider: (provider: 'anthropic' | 'gemini') => void;
   setCurrentModel: (model: string) => void;
   setAvailableModels: (models: string[]) => void;
   
@@ -93,6 +95,7 @@ export const useJarvisStore = create<JarvisState>((set) => ({
   agents: [],
   telemetry: [],
   dismissNonce: 0,
+  aiProvider: 'anthropic',
   currentModel: 'claude-sonnet-4-6',
   availableModels: [
     'claude-opus-4-7',
@@ -195,6 +198,8 @@ export const useJarvisStore = create<JarvisState>((set) => ({
 
   addTelemetry: (t) =>
     set((s) => ({ telemetry: [...s.telemetry.slice(-200), t] })),
+
+  setAIProvider: (provider) => set({ aiProvider: provider }),
 
   setCurrentModel: (model) => set({ currentModel: model }),
   

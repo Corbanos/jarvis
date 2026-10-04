@@ -9,9 +9,12 @@ export function AgentControlPanel() {
   const agents = useJarvisStore((s) => s.agents);
   const focusedAgentId = useJarvisStore((s) => s.focusedAgentId);
   const setFocusedAgent = useJarvisStore((s) => s.setFocusedAgent);
+  const aiProvider = useJarvisStore((s) => s.aiProvider);
+  const setAIProvider = useJarvisStore((s) => s.setAIProvider);
   const currentModel = useJarvisStore((s) => s.currentModel);
   const availableModels = useJarvisStore((s) => s.availableModels);
   const setCurrentModel = useJarvisStore((s) => s.setCurrentModel);
+  const setAvailableModels = useJarvisStore((s) => s.setAvailableModels);
   const setAgents = useJarvisStore((s) => s.setAgents);
   const clearAgentHistory = useJarvisStore((s) => s.clearAgentHistory);
 
@@ -45,8 +48,10 @@ export function AgentControlPanel() {
 
     authFetch(`${API}/api/model`)
       .then((r) => r.json())
-      .then((data: { current: string; available: string[] }) => {
+      .then((data: { provider?: 'anthropic' | 'gemini'; current: string; available: string[] }) => {
+        if (data.provider) setAIProvider(data.provider);
         if (data.current) setCurrentModel(data.current);
+        if (Array.isArray(data.available)) setAvailableModels(data.available);
       })
       .catch(() => {});
 
@@ -54,7 +59,7 @@ export function AgentControlPanel() {
       clearInterval(t);
       window.removeEventListener('jarvis-projects-event', onProjectsEvent);
     };
-  }, [setAgents, setCurrentModel]);
+  }, [setAIProvider, setAgents, setAvailableModels, setCurrentModel]);
 
   const activeAgents = agents.filter((a) => a.status === 'running');
   const historicalAgents = agents.filter((a) => a.status !== 'running');
@@ -65,7 +70,7 @@ export function AgentControlPanel() {
       const res = await authFetch(`${API}/api/model`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model }),
+        body: JSON.stringify({ provider: aiProvider, model }),
       });
       if (res.ok) {
         setCurrentModel(model);
@@ -796,6 +801,9 @@ function LogLine({ text }: { text: string }) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 function formatModelName(m: string): string {
+  if (m === 'gemini-2.5-pro') return 'Gemini 2.5 Pro';
+  if (m === 'gemini-2.5-flash') return 'Gemini 2.5 Flash';
+  if (m === 'gemini-2.0-flash') return 'Gemini 2.0 Flash';
   // Map api id → display name. Keep these in sync with AVAILABLE_MODELS.
   if (m === 'claude-opus-4-7')              return 'Opus 4.7';
   if (m === 'claude-sonnet-4-6')            return 'Sonnet 4.6';

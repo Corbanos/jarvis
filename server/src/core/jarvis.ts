@@ -1,4 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk';
+import { GoogleGenAI, type Content, type Part } from '@google/genai';
 import { v4 as uuid } from 'uuid';
 import { readFileSync, existsSync } from 'fs';
 import { getActiveProjectId } from './active-project.js';
@@ -7,9 +8,9 @@ import { join } from 'path';
 import { homedir } from 'os';
 import { toolRegistry } from './tool-registry.js';
 import { memory } from './memory.js';
-import { speak, getVoiceInfo } from '../modules/voice-tts.js';
 import { log } from './logger.js';
 import type { WSHub } from '../ws.js';
+import { getCurrentModel, getCurrentProvider, getProviderApiKey, setCurrentModel } from './ai-provider.js';
 
 // ── Operator profile ────────────────────────────────────────────────
 // Read ~/.jarvis/OPERATOR.md fresh-ish on each chat (small in-memory cache)
@@ -196,12 +197,7 @@ export interface JarvisResponse {
   toolCalls: Array<{ name: string; input: Record<string, unknown>; result: string }>;
 }
 
-// Current model used by Jarvis (shared with agent-pool)
-let currentModel = 'claude-sonnet-4-6';
-
 export function createJarvis(ws: WSHub) {
-  const client = new Anthropic({ apiKey: process.env['ANTHROPIC_API_KEY'] });
-
   function broadcast(type: string, payload: Record<string, unknown>) {
     ws.broadcast({ type: type as never, payload, timestamp: Date.now() });
   }
@@ -217,83 +213,165 @@ export function createJarvis(ws: WSHub) {
 
     memory.saveMessage(uuid(), sessionId, 'user', userMessage);
 
+    const provider = getCurrentProvider();
+    const model = getCurrentModel(provider);
+    const apiKey = getProviderApiKey(provider);
+    if (!apiKey) {
+      throw new Error(`Missing ${provider} API key. Configure setup first.`);
+    }
+
     // Build conversation from DB (last 30, exclude the one just saved, then re-add fresh)
     const history = memory.getMessages(sessionId, 31).reverse();
-    const messages: Anthropic.MessageParam[] = history
-      .slice(0, -1)
-      .map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content }));
-    messages.push({ role: 'user', content: userMessage });
 
     let finalText = '';
     const toolCalls: Array<{ name: string; input: Record<string, unknown>; result: string }> = [];
 
-    broadcast('thinking', { sessionId, id: msgId, start: true });
-
-    // Agentic loop — run model, execute any tool calls, repeat until model returns end_turn
+    const systemPrompt = buildSystemPrompt();
     const MAX_ITERATIONS = 12;
-    for (let iter = 0; iter < MAX_ITERATIONS; iter++) {
-      // Stream the response so HUD sees tokens live
-      let iterText = '';
-      const stream = client.messages.stream({
-        model: currentModel,
-        max_tokens: 8192,
-        system: buildSystemPrompt(),
-        tools: toolRegistry.anthropicTools() as Anthropic.Tool[],
-        messages,
-      });
+    broadcast('thinking', { sessionId, id: msgId, start: true, provider, model });
 
-      // Stream text tokens to HUD/caller as they arrive
-      stream.on('text', (token: string) => {
-        iterText += token;
-        onToken?.(token);
-        broadcast('thinking', { sessionId, token, id: msgId });
-      });
+    if (provider === 'anthropic') {
+      const client = new Anthropic({ apiKey });
+      const messages: Anthropic.MessageParam[] = history
+        .slice(0, -1)
+        .map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content }));
+      messages.push({ role: 'user', content: userMessage });
 
-      // Wait for the message to fully complete
-      const final = await stream.finalMessage();
-
-      // Append this iteration's text to overall response
-      finalText += iterText;
-
-      // If the model decided it's done talking, exit the loop
-      if (final.stop_reason !== 'tool_use') {
-        break;
-      }
-
-      // Otherwise, execute every tool_use block, then send results back
-      const toolUses = final.content.filter(
-        (b): b is Anthropic.ToolUseBlock => b.type === 'tool_use'
-      );
-
-      if (toolUses.length === 0) {
-        // Defensive: stop_reason said tool_use but no blocks present
-        break;
-      }
-
-      const toolResults: Anthropic.ToolResultBlockParam[] = [];
-      for (const tu of toolUses) {
-        log.tool_call(tu.name, sessionId);
-        broadcast('tool_call', {
-          sessionId, name: tu.name,
-          input: tu.input as Record<string, unknown>,
-          status: 'executing', id: msgId,
+      for (let iter = 0; iter < MAX_ITERATIONS; iter++) {
+        let iterText = '';
+        const stream = client.messages.stream({
+          model,
+          max_tokens: 8192,
+          system: systemPrompt,
+          tools: toolRegistry.anthropicTools() as Anthropic.Tool[],
+          messages,
         });
 
-        const result = await toolRegistry.dispatch(tu.name, tu.input as Record<string, unknown>);
-        log.tool_result(tu.name, result);
-
-        toolCalls.push({ name: tu.name, input: tu.input as Record<string, unknown>, result });
-        toolResults.push({ type: 'tool_result', tool_use_id: tu.id, content: result });
-
-        broadcast('tool_result', {
-          sessionId, name: tu.name,
-          result: result.slice(0, 800), id: msgId,
+        stream.on('text', (token: string) => {
+          iterText += token;
+          onToken?.(token);
+          broadcast('thinking', { sessionId, token, id: msgId });
         });
-      }
 
-      // Append assistant message + tool results to conversation, then loop
-      messages.push({ role: 'assistant', content: final.content });
-      messages.push({ role: 'user', content: toolResults });
+        const final = await stream.finalMessage();
+        finalText += iterText;
+
+        if (final.stop_reason !== 'tool_use') break;
+
+        const toolUses = final.content.filter(
+          (b): b is Anthropic.ToolUseBlock => b.type === 'tool_use'
+        );
+        if (toolUses.length === 0) break;
+
+        const toolResults: Anthropic.ToolResultBlockParam[] = [];
+        for (const tu of toolUses) {
+          log.tool_call(tu.name, sessionId);
+          broadcast('tool_call', {
+            sessionId,
+            name: tu.name,
+            input: tu.input as Record<string, unknown>,
+            status: 'executing',
+            id: msgId,
+          });
+
+          const result = await toolRegistry.dispatch(tu.name, tu.input as Record<string, unknown>);
+          log.tool_result(tu.name, result);
+
+          toolCalls.push({ name: tu.name, input: tu.input as Record<string, unknown>, result });
+          toolResults.push({ type: 'tool_result', tool_use_id: tu.id, content: result });
+
+          broadcast('tool_result', {
+            sessionId,
+            name: tu.name,
+            result: result.slice(0, 800),
+            id: msgId,
+          });
+        }
+
+        messages.push({ role: 'assistant', content: final.content });
+        messages.push({ role: 'user', content: toolResults });
+      }
+    } else {
+      const client = new GoogleGenAI({ apiKey });
+      const contents: Content[] = history
+        .slice(0, -1)
+        .map((m) => ({
+          role: m.role === 'assistant' ? 'model' : 'user',
+          parts: [{ text: m.content }],
+        }));
+      contents.push({ role: 'user', parts: [{ text: userMessage }] });
+
+      for (let iter = 0; iter < MAX_ITERATIONS; iter++) {
+        let iterText = '';
+        let finalChunk: Awaited<ReturnType<typeof client.models.generateContent>> | undefined;
+        const stream = await client.models.generateContentStream({
+          model,
+          contents,
+          config: {
+            systemInstruction: systemPrompt,
+            tools: [{ functionDeclarations: toolRegistry.geminiTools() }],
+          },
+        });
+
+        for await (const chunk of stream) {
+          finalChunk = chunk;
+          if (!chunk.text) continue;
+          iterText += chunk.text;
+          onToken?.(chunk.text);
+          broadcast('thinking', { sessionId, token: chunk.text, id: msgId });
+        }
+
+        finalText += iterText;
+        const functionCalls = finalChunk?.functionCalls ?? [];
+        if (!functionCalls.length) break;
+
+        const assistantParts: Part[] = [];
+        if (iterText) assistantParts.push({ text: iterText });
+        const responseParts: Part[] = [];
+
+        for (const call of functionCalls) {
+          const name = call.name ?? '';
+          if (!name) continue;
+          const input =
+            call.args && typeof call.args === 'object' && !Array.isArray(call.args)
+              ? (call.args as Record<string, unknown>)
+              : {};
+          const callId = call.id ?? `${name}-${iter}`;
+
+          log.tool_call(name, sessionId);
+          broadcast('tool_call', {
+            sessionId,
+            name,
+            input,
+            status: 'executing',
+            id: msgId,
+          });
+
+          const result = await toolRegistry.dispatch(name, input);
+          log.tool_result(name, result);
+
+          toolCalls.push({ name, input, result });
+          assistantParts.push({ functionCall: { id: callId, name, args: input } });
+          responseParts.push({
+            functionResponse: {
+              id: callId,
+              name,
+              response: { output: result },
+            },
+          });
+
+          broadcast('tool_result', {
+            sessionId,
+            name,
+            result: result.slice(0, 800),
+            id: msgId,
+          });
+        }
+
+        if (!responseParts.length) break;
+        contents.push({ role: 'model', parts: assistantParts });
+        contents.push({ role: 'user', parts: responseParts });
+      }
     }
 
     // Save Jarvis's final response
@@ -311,13 +389,14 @@ export function createJarvis(ws: WSHub) {
   }
 
   function setModel(model: string): void {
-    currentModel = model;
+    const provider = getCurrentProvider();
+    if (!setCurrentModel(model, provider)) return;
     log.info(`Jarvis model changed to: ${model}`);
-    broadcast('jarvis_model_changed', { model });
+    broadcast('jarvis_model_changed', { model, provider });
   }
 
   function getModel(): string {
-    return currentModel;
+    return getCurrentModel(getCurrentProvider());
   }
 
   return { chat, setModel, getModel };
