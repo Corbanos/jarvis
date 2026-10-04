@@ -11,6 +11,7 @@
     "@anthropic-ai/sdk": "latest",
     "@fastify/cors": "latest",
     "@fastify/websocket": "latest",
+    "@google/genai": "^2.27.0",
     "@nut-tree-fork/nut-js": "^4.2.6",
     "bambu-node": "^3.22.21",
     "better-sqlite3": "latest",

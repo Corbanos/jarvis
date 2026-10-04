@@ -25,7 +25,7 @@ import { agentRoutes } from './routes/agents.js';
 import { telemetryRoutes } from './routes/telemetry.js';
 import { voiceRoutes } from './routes/voice.js';
 import { jobRoutes } from './routes/jobs.js';
-import { setupRoutes, loadConfig, applyApiKey } from './routes/setup.js';
+import { setupRoutes, applySavedConfig, getApiKey } from './routes/setup.js';
 import { authRoutes } from './routes/auth.js';
 import { locationRoutes } from './routes/location.js';
 import { projectsRoutes } from './routes/projects.js';
@@ -36,6 +36,7 @@ import { checkWhisperAvailable } from './modules/voice-vtt.js';
 import { getVoiceInfo } from './modules/voice-tts.js';
 import { log } from './core/logger.js';
 import { existsSync } from 'fs';
+import { getCurrentProvider } from './core/ai-provider.js';
 
 declare module 'fastify' {
   interface FastifyInstance {
@@ -48,14 +49,8 @@ declare module 'fastify' {
 const PORT = parseInt(process.env['JARVIS_PORT'] ?? '7777', 10);
 
 async function main() {
-  // Load persisted API key from config file if not already in env
-  if (!process.env['ANTHROPIC_API_KEY']) {
-    const saved = loadConfig().anthropicApiKey;
-    if (saved) {
-      applyApiKey(saved);
-      log.info('Loaded API key from ~/.jarvis/config.json');
-    }
-  }
+  applySavedConfig();
+  log.info('Loaded AI configuration from ~/.jarvis/config.json (when available)');
 
   const app = Fastify({ logger: false });
   await app.register(cors, { origin: '*' });
@@ -151,12 +146,18 @@ async function main() {
   log.banner(PORT);
   log.section('CAPABILITIES');
 
-  const hasKey = !!process.env['ANTHROPIC_API_KEY']?.startsWith('sk-');
+  const provider = getCurrentProvider();
+  const providerKey = getApiKey(provider);
+  const hasKey = !!providerKey;
   const accessToken = getAccessToken();
   log.check('Access Token', !!accessToken, accessToken ? `enabled (${accessToken.slice(0,4)}...${accessToken.slice(-4)})` : 'OFF — local-only mode');
 
-  log.check('Anthropic API Key', hasKey,
-    hasKey ? `sk-...${process.env['ANTHROPIC_API_KEY']?.slice(-4)} (configured)` : 'NOT SET — configure via HUD at http://localhost:3001');
+  log.check('AI Provider', true, provider);
+  log.check(
+    `${provider === 'anthropic' ? 'Anthropic' : 'Gemini'} API Key`,
+    hasKey,
+    hasKey ? `${providerKey?.slice(0, 3)}...${providerKey?.slice(-4)} (configured)` : 'NOT SET — configure via HUD at http://localhost:3001',
+  );
 
   const whisperOk = await checkWhisperAvailable();
   log.check('Whisper VTT', whisperOk, whisperOk ? '/opt/homebrew/bin/whisper-cli + ggml-base.en.bin' : 'not found');
@@ -192,7 +193,7 @@ async function main() {
 
   ws.broadcast({
     type: 'status',
-    payload: { message: 'JARVIS ONLINE', apiKeyConfigured: hasKey },
+    payload: { message: 'JARVIS ONLINE', apiKeyConfigured: hasKey, provider },
     timestamp: Date.now(),
   });
 }

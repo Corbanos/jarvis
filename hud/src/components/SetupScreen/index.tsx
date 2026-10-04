@@ -5,12 +5,14 @@ import { authFetch } from '@/lib/auth';
 const API = process.env['NEXT_PUBLIC_JARVIS_API'] ?? 'http://localhost:7777';
 
 type SetupStep = 'enter' | 'testing' | 'success' | 'error';
+type AIProvider = 'anthropic' | 'gemini';
 
 interface SetupScreenProps {
   onComplete: () => void;
 }
 
 export function SetupScreen({ onComplete }: SetupScreenProps) {
+  const [provider, setProvider] = useState<AIProvider>('anthropic');
   const [key, setKey] = useState('');
   const [step, setStep] = useState<SetupStep>('enter');
   const [error, setError] = useState('');
@@ -28,8 +30,8 @@ export function SetupScreen({ onComplete }: SetupScreenProps) {
       '> Computer use module... STANDBY',
       '> Browser control... STANDBY',
       '__BLANK__',
-      '> ANTHROPIC API KEY REQUIRED',
-      '> Obtain key at: console.anthropic.com',
+      '> AI PROVIDER + API KEY REQUIRED',
+      '> Select provider and enter API key',
     ];
     let i = 0;
     const t = setInterval(() => {
@@ -43,6 +45,17 @@ export function SetupScreen({ onComplete }: SetupScreenProps) {
     return () => clearInterval(t);
   }, []);
 
+  useEffect(() => {
+    authFetch(`${API}/api/setup/status`)
+      .then((r) => r.json())
+      .then((s: { provider?: AIProvider }) => {
+        if (s.provider === 'anthropic' || s.provider === 'gemini') {
+          setProvider(s.provider);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
   const handleKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter') submit();
   };
@@ -50,10 +63,6 @@ export function SetupScreen({ onComplete }: SetupScreenProps) {
   const submit = async () => {
     const trimmed = key.trim();
     if (!trimmed) return;
-    if (!trimmed.startsWith('sk-ant-')) {
-      setError('Key must start with sk-ant-  — copy it from console.anthropic.com');
-      return;
-    }
 
     setStep('testing');
     setError('');
@@ -62,12 +71,12 @@ export function SetupScreen({ onComplete }: SetupScreenProps) {
       const res = await authFetch(`${API}/api/setup/key`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ key: trimmed }),
+        body: JSON.stringify({ provider, key: trimmed }),
       });
       const data = await res.json() as { valid: boolean; error?: string; preview?: string };
 
       if (data.valid) {
-        setPreview(`sk-...${trimmed.slice(-4)}`);
+        setPreview(data.preview ?? '***');
         setStep('success');
         setTimeout(onComplete, 2200);
       } else {
@@ -187,7 +196,7 @@ export function SetupScreen({ onComplete }: SetupScreenProps) {
             <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.3)', letterSpacing: '0.05em' }}>
               Retrieve from{' '}
               <span style={{ color: '#00e5ff', textDecoration: 'underline' }}>
-                console.anthropic.com
+                {provider === 'anthropic' ? 'console.anthropic.com' : 'aistudio.google.com/apikey'}
               </span>
               {' '}→ API Keys
             </div>
@@ -197,6 +206,31 @@ export function SetupScreen({ onComplete }: SetupScreenProps) {
             <SuccessState preview={preview} />
           ) : (
             <>
+              <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
+                <select
+                  value={provider}
+                  onChange={(e) => {
+                    setProvider(e.target.value as AIProvider);
+                    if (step === 'error') { setStep('enter'); setError(''); }
+                  }}
+                  disabled={step === 'testing'}
+                  style={{
+                    width: 170,
+                    background: 'rgba(0,15,35,0.8)',
+                    border: '1px solid rgba(0,229,255,0.25)',
+                    borderRadius: 3,
+                    color: '#d0eeff',
+                    fontSize: 11,
+                    fontFamily: 'inherit',
+                    letterSpacing: '0.08em',
+                    padding: '10px 10px',
+                    outline: 'none',
+                  }}
+                >
+                  <option value="anthropic" style={{ background: '#0a1428', color: '#00e5ff' }}>ANTHROPIC</option>
+                  <option value="gemini" style={{ background: '#0a1428', color: '#00e5ff' }}>GEMINI</option>
+                </select>
+              </div>
               <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
                 <div style={{ flex: 1, position: 'relative' }}>
                   <span style={{
@@ -209,7 +243,7 @@ export function SetupScreen({ onComplete }: SetupScreenProps) {
                     value={key}
                     onChange={(e) => { setKey(e.target.value); if (step === 'error') { setStep('enter'); setError(''); } }}
                     onKeyDown={handleKeyDown}
-                    placeholder="sk-ant-api03-..."
+                    placeholder={provider === 'anthropic' ? 'sk-ant-api03-...' : 'AIza...'}
                     disabled={step === 'testing'}
                     style={{
                       width: '100%',
@@ -254,7 +288,7 @@ export function SetupScreen({ onComplete }: SetupScreenProps) {
               {step === 'testing' && (
                 <div style={{ fontSize: 10, color: '#00e5ff', letterSpacing: '0.15em', display: 'flex', alignItems: 'center', gap: 8 }}>
                   <span style={{ animation: 'pulse-glow 0.8s infinite' }}>⟐</span>
-                  CONTACTING ANTHROPIC API...
+                  CONTACTING {provider === 'anthropic' ? 'ANTHROPIC' : 'GEMINI'} API...
                 </div>
               )}
 

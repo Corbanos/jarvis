@@ -26,7 +26,10 @@ export function SystemTelemetry() {
 
   const currentModel = useJarvisStore((s) => s.currentModel);
   const availableModels = useJarvisStore((s) => s.availableModels);
+  const aiProvider = useJarvisStore((s) => s.aiProvider);
+  const setAIProvider = useJarvisStore((s) => s.setAIProvider);
   const setCurrentModel = useJarvisStore((s) => s.setCurrentModel);
+  const setAvailableModels = useJarvisStore((s) => s.setAvailableModels);
 
   useEffect(() => {
     const tick = async () => {
@@ -46,13 +49,17 @@ export function SystemTelemetry() {
 
     authFetch(`${API}/api/model`)
       .then((r) => r.json())
-      .then((d: { current: string }) => { if (d.current) setCurrentModel(d.current); })
+      .then((d: { provider?: 'anthropic' | 'gemini'; current: string; available: string[] }) => {
+        if (d.provider) setAIProvider(d.provider);
+        if (d.current) setCurrentModel(d.current);
+        if (Array.isArray(d.available)) setAvailableModels(d.available);
+      })
       .catch(() => { /* ignore */ });
 
     tick();
     const t = setInterval(tick, 4000);
     return () => clearInterval(t);
-  }, [setCurrentModel]);
+  }, [setAIProvider, setAvailableModels, setCurrentModel]);
 
   const uptimeStr = health.uptime ? formatDuration(health.uptime) : '—';
 
@@ -61,7 +68,7 @@ export function SystemTelemetry() {
       const res = await authFetch(`${API}/api/model`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model: m }),
+        body: JSON.stringify({ provider: aiProvider, model: m }),
       });
       if (res.ok) setCurrentModel(m);
     } catch { /* ignore */ }
@@ -77,7 +84,7 @@ export function SystemTelemetry() {
       <Divider />
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-        <span style={{ fontSize: 9, color: 'var(--text-dim)', letterSpacing: '0.15em' }}>CLAUDE MODEL</span>
+        <span style={{ fontSize: 9, color: 'var(--text-dim)', letterSpacing: '0.15em' }}>{aiProvider.toUpperCase()} MODEL</span>
         <select
           value={currentModel}
           onChange={(e) => changeModel(e.target.value)}
@@ -115,6 +122,9 @@ export function SystemTelemetry() {
 }
 
 function prettyModel(m: string): string {
+  if (m === 'gemini-2.5-pro') return 'Gemini 2.5 Pro';
+  if (m === 'gemini-2.5-flash') return 'Gemini 2.5 Flash';
+  if (m === 'gemini-2.0-flash') return 'Gemini 2.0 Flash';
   // Map api id → display name. Keep these in sync with AVAILABLE_MODELS.
   if (m === 'claude-opus-4-7')              return 'Opus 4.7';
   if (m === 'claude-sonnet-4-6')            return 'Sonnet 4.6';

@@ -76,6 +76,7 @@ export async function agentRoutes(app: FastifyInstance) {
   // Get current model and available models
   app.get('/api/model', async (_req, reply) => {
     return reply.send({
+      provider: app.agentPool.getProvider(),
       current: app.agentPool.getModel(),
       available: app.agentPool.getAvailableModels(),
     });
@@ -83,14 +84,23 @@ export async function agentRoutes(app: FastifyInstance) {
 
   // Set the model for all future agents (and main Jarvis)
   app.post('/api/model', async (request, reply) => {
-    const body = request.body as { model: string };
+    const body = request.body as { model?: string; provider?: string };
+
+    if (body.provider) {
+      const providerOk = app.agentPool.setProvider(body.provider);
+      if (!providerOk) {
+        return reply.status(400).send({ error: 'Invalid provider', availableProviders: ['anthropic', 'gemini'] });
+      }
+    }
+
     if (!body.model) return reply.status(400).send({ error: 'model required' });
 
     const valid = app.agentPool.setModel(body.model);
     if (!valid) {
       return reply.status(400).send({ 
         error: 'Invalid model', 
-        available: app.agentPool.getAvailableModels() 
+        provider: app.agentPool.getProvider(),
+        available: app.agentPool.getAvailableModels(),
       });
     }
 
@@ -101,6 +111,7 @@ export async function agentRoutes(app: FastifyInstance) {
 
     return reply.send({ 
       success: true, 
+      provider: app.agentPool.getProvider(),
       model: body.model,
       message: 'Model updated for all future agents and Jarvis'
     });
